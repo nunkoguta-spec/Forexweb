@@ -1,24 +1,24 @@
 import { NextResponse } from 'next/server';
 import { Scraper } from 'forexfactory-scraper';
 
-export const dynamic = 'force-dynamic';
+// Catatan: export const dynamic = 'force-dynamic' SUDAH DIHAPUS agar Vercel bisa build
 
 export async function GET() {
   try {
     const scraper = new Scraper();
-    // Mengambil data kalender minggu ini
+    
+    // Mengambil data kalender minggu ini dari Forex Factory
     const events = await scraper.scrapeCalendar();
     
-    // Format data agar sesuai dengan tampilan Forex Factory
+    // Format data agar sesuai dengan tampilan aplikasi
     const formattedEvents = events.map((ev: any) => ({
-      title: ev.title,
-      country: ev.country,
-      date: ev.date,
-      impact: ev.impact,
+      title: ev.title || ev.event || 'Unknown Event',
+      country: ev.country || ev.currency || '-',
+      date: ev.date || ev.time || new Date().toISOString(),
+      impact: ev.impact || 'Low',
       actual: ev.actual || '-',
       forecast: ev.forecast || '-',
       previous: ev.previous || '-',
-      // Forex Factory biasanya memiliki detail seperti 'Alert' atau 'Detail'
       detail: ev.detail || ''
     }));
 
