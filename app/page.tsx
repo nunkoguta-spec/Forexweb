@@ -42,6 +42,17 @@ export default function Dashboard() {
   // Ref untuk TradingView Chart
   const chartContainerRef = useRef<HTMLDivElement>(null);
 
+  // --- FUNGSI FORMAT WAKTU (YANG HILANG TADI) ---
+  function formatTimeWIB(dateString: string) {
+    if (!dateString) return '-';
+    return new Date(dateString).toLocaleTimeString('id-ID', { timeZone: 'Asia/Jakarta', hour: '2-digit', minute: '2-digit', hour12: false }) + " WIB";
+  }
+
+  function formatDateWIB(dateString: string) {
+    if (!dateString) return '-';
+    return new Date(dateString).toLocaleDateString('id-ID', { timeZone: 'Asia/Jakarta', weekday: 'short', day: 'numeric', month: 'short' });
+  }
+
   // --- EFEK LIVE POLLING & CLOCK & COUNTDOWN ---
   useEffect(() => {
     setFilterMonth(new Date().toISOString().slice(0, 7));
