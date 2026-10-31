@@ -5,8 +5,8 @@ import "./globals.css";
 const inter = Inter({ subsets: ["latin"] });
 
 export const metadata: Metadata = {
-  title: "Forex Intel | Trading Terminal",
-  description: "Professional Forex News & Signal Intelligence",
+  title: "Forex Intel",
+  description: "Forex News & Signal Intelligence Platform",
 };
 
 export default function RootLayout({
@@ -16,7 +16,7 @@ export default function RootLayout({
 }>) {
   return (
     <html lang="en" className="dark">
-      <body className={`${inter.className} bg-[#09090b] text-slate-200 antialiased selection:bg-blue-500/30`}>
+      <body className={`${inter.className} bg-[#09090b] text-slate-200 antialiased`}>
         {children}
       </body>
     </html>
