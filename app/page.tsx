@@ -21,7 +21,7 @@ export default function Dashboard() {
   // State Jurnal & Filter
   const [isSavingTrade, setIsSavingTrade] = useState(false);
   const [filterMonth, setFilterMonth] = useState('');
-  const [focusMode, setFocusMode] = useState(false); // New: High Impact Only
+  const [focusMode, setFocusMode] = useState(false);
   const [currentTime, setCurrentTime] = useState('');
   const [dateFilter, setDateFilter] = useState<'yesterday' | 'today' | 'tomorrow'>('today');
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
@@ -153,9 +153,9 @@ export default function Dashboard() {
 
   async function saveTradeToJournal(result: 'win' | 'loss') {
     if (!analysis) return; setIsSavingTrade(true);
-    let pips = result === 'win' ? 20 : -15; // Bisa disesuaikan nanti dengan TP/SL AI
+    let pips = result === 'win' ? 20 : -15; 
     const { error } = await supabase.from('trade_journal').insert([{
-      pair: analysis.pair, direction: analysis.direction, result: result, pips: pips, notes: `Berita: ${selectedEvent.title}`
+      pair: analysis.pair, direction: analysis.direction, result: result, pips: pips, notes: `Sinyal dari: ${selectedEvent.title}`
     }]);
     if (error) alert("Gagal simpan: " + error.message);
     else { fetchJournal(); setAnalysis(null); setSelectedEvent(null); }
@@ -174,7 +174,6 @@ export default function Dashboard() {
     return true;
   });
 
-  // Terapkan Focus Mode
   const importantEvents = filteredByDate.filter(e => {
     if (focusMode) return e.impact === 'High';
     return e.impact === 'High' || e.impact === 'Medium';
@@ -189,9 +188,23 @@ export default function Dashboard() {
   const totalPips = filteredJournal.reduce((acc, curr) => acc + (Number(curr.pips) || 0), 0);
   const riskAmountUSD = (Number(calcBalance) * Number(calcRisk)) / 100;
   const lotSizeStandard = riskAmountUSD / (Number(calcSl) * 10);
-
-  // Daily Briefing (Hitung berita High Impact hari ini)
   const highImpactToday = filteredByDate.filter(e => e.impact === 'High').length;
+
+  // Kalkulasi RR Sederhana untuk UI
+  let rrRatio = "0";
+  if (analysis && analysis.direction !== 'no_trade' && analysis.entry_zone && analysis.stop_loss && analysis.take_profit) {
+    // Kita parsing angka jika formatnya string seperti "1.0850 - 1.0855"
+    const parseNum = (str: string) => parseFloat(str.split('-')[0].replace(/[^0-9.]/g, ''));
+    const entry = parseNum(analysis.entry_zone);
+    const sl = parseNum(analysis.stop_loss);
+    const tp = parseNum(analysis.take_profit);
+    
+    if (!isNaN(entry) && !isNaN(sl) && !isNaN(tp) && entry !== sl) {
+      const risk = Math.abs(entry - sl);
+      const reward = Math.abs(tp - entry);
+      rrRatio = (reward / risk).toFixed(1);
+    }
+  }
 
   return (
     <div className="min-h-screen flex flex-col bg-[#050505] font-sans selection:bg-[#D4AF37]/30 pb-10">
@@ -289,7 +302,6 @@ export default function Dashboard() {
                     </div>
                   </div>
                   
-                  {/* TOGGLE FOCUS MODE */}
                   <div className="flex items-center gap-3 bg-[#111] px-4 py-2 rounded-xl border border-white/5 cursor-pointer" onClick={() => setFocusMode(!focusMode)}>
                     <div className={`w-8 h-4 rounded-full relative transition-colors ${focusMode ? 'bg-[#D4AF37]' : 'bg-gray-700'}`}>
                       <div className={`absolute top-0.5 w-3 h-3 rounded-full bg-white transition-all ${focusMode ? 'left-4.5' : 'left-0.5'}`}></div>
@@ -341,77 +353,70 @@ export default function Dashboard() {
               </div>
             </div>
 
-            {/* KANAN: PANEL AI BARU */}
+            {/* KANAN: PANEL AI ORDER TICKET */}
             <div className="xl:col-span-4 h-fit sticky top-32">
               <div className="bg-[#0a0a0a] border border-white/5 rounded-2xl overflow-hidden shadow-2xl">
                 <div className="p-6 border-b border-white/5 bg-gradient-to-b from-[#D4AF37]/5 to-transparent">
-                  <h2 className="text-base font-serif text-white tracking-widest uppercase">Quant Signal</h2>
+                  <h2 className="text-base font-serif text-white tracking-widest uppercase">Execution Signal</h2>
                 </div>
                 
                 <div className="p-6">
                   {analysis ? (
-                    <div className="space-y-6 animate-in fade-in duration-300">
-                      {/* RELEVANCE & CONFIDENCE SCORE */}
-                      <div className="flex gap-2">
-                         <div className="flex-1 bg-[#111] p-3 rounded-xl border border-white/5 text-center">
-                            <p className="text-[9px] text-gray-500 uppercase tracking-widest mb-1">Relevance</p>
-                            <p className={`font-mono text-lg ${analysis.relevance_score >= 50 ? 'text-green-400' : 'text-red-400'}`}>{analysis.relevance_score}/100</p>
-                         </div>
-                         <div className="flex-1 bg-[#111] p-3 rounded-xl border border-white/5 text-center">
-                            <p className="text-[9px] text-gray-500 uppercase tracking-widest mb-1">Risk Score</p>
-                            <p className={`font-mono text-lg ${analysis.risk_score > 70 ? 'text-red-400' : 'text-amber-400'}`}>{analysis.risk_score}/100</p>
-                         </div>
-                      </div>
-
-                      {/* SINYAL UTAMA */}
+                    <div className="space-y-5 animate-in fade-in duration-300">
+                      
+                      {/* UTAMA: ARAH TRADING */}
                       <div className={`p-6 rounded-xl border flex flex-col items-center justify-center text-center ${
                         analysis.direction === 'buy' ? 'bg-green-500/5 border-green-500/20' : 
                         analysis.direction === 'sell' ? 'bg-red-500/5 border-red-500/20' : 
                         'bg-gray-800/30 border-white/5'
                       }`}>
-                        <p className="text-[10px] text-gray-400 mb-1 font-mono tracking-widest uppercase">{analysis.pair} - {analysis.timeframe}</p>
-                        <p className={`font-serif text-4xl tracking-[0.2em] uppercase ${
+                        <p className="text-[10px] text-gray-400 mb-1 font-mono tracking-widest uppercase">{analysis.pair} • {analysis.timeframe}</p>
+                        <p className={`font-serif text-5xl tracking-[0.2em] uppercase ${
                           analysis.direction === 'buy' ? 'text-green-400' : 
                           analysis.direction === 'sell' ? 'text-red-400' : 'text-gray-300'
                         }`}>{analysis.direction}</p>
+                        <p className="text-xs text-gray-500 mt-2">Confidence: {(analysis.confidence)}%</p>
                       </div>
 
-                      {/* LEVEL TRADING (Hanya muncul jika bukan NO_TRADE) */}
+                      {/* LEVEL TRADING (ENTRY, SL, TP) */}
                       {analysis.direction !== 'no_trade' && (
-                        <div className="grid grid-cols-3 gap-2 text-center bg-[#111] p-3 rounded-xl border border-white/5">
-                          <div>
-                            <p className="text-[9px] text-gray-500 uppercase tracking-widest mb-1">Entry</p>
-                            <p className="font-mono text-xs text-white">{analysis.entry_zone}</p>
-                          </div>
-                          <div>
-                            <p className="text-[9px] text-gray-500 uppercase tracking-widest mb-1">Stop Loss</p>
-                            <p className="font-mono text-xs text-red-400">{analysis.stop_loss}</p>
-                          </div>
-                          <div>
-                            <p className="text-[9px] text-gray-500 uppercase tracking-widest mb-1">Take Profit</p>
-                            <p className="font-mono text-xs text-green-400">{analysis.take_profit}</p>
-                          </div>
+                        <div className="bg-[#111] border border-white/5 rounded-xl p-4 space-y-3">
+                           <div className="flex justify-between items-center border-b border-white/5 pb-2">
+                              <span className="text-[10px] text-gray-500 uppercase tracking-widest">Entry Zone</span>
+                              <span className="font-mono text-sm text-white font-bold">{analysis.entry_zone}</span>
+                           </div>
+                           <div className="flex justify-between items-center">
+                              <span className="text-[10px] text-red-400 uppercase tracking-widest">Stop Loss</span>
+                              <span className="font-mono text-sm text-red-400 font-bold">{analysis.stop_loss}</span>
+                           </div>
+                           <div className="flex justify-between items-center">
+                              <span className="text-[10px] text-green-400 uppercase tracking-widest">Take Profit</span>
+                              <span className="font-mono text-sm text-green-400 font-bold">{analysis.take_profit}</span>
+                           </div>
+                           <div className="flex justify-between items-center pt-2 border-t border-white/5">
+                              <span className="text-[10px] text-[#D4AF37] uppercase tracking-widest">Risk/Reward</span>
+                              <span className="font-mono text-sm text-[#D4AF37] font-bold">1 : {rrRatio}</span>
+                           </div>
                         </div>
                       )}
-                      
-                      {/* RATIONALE */}
+
+                      {/* RATIONALE SINGKAT */}
                       <div>
-                        <h3 className="text-[10px] text-[#D4AF37] uppercase tracking-[0.2em] mb-2">Structured Rationale</h3>
+                        <h3 className="text-[10px] text-gray-500 uppercase tracking-[0.2em] mb-2">Trade Rationale</h3>
                         {analysis.direction === 'no_trade' ? (
-                          <p className="text-sm text-gray-400 italic">"{analysis.no_trade_reason}"</p>
+                          <p className="text-sm text-red-400 italic">"{analysis.no_trade_reason}"</p>
                         ) : (
-                          <ul className="text-xs text-gray-400 space-y-2 list-disc list-inside">
+                          <ul className="text-xs text-gray-400 space-y-1.5 list-disc list-inside">
                             <li><strong className="text-gray-200">Surprise:</strong> {analysis.rationale?.surprise}</li>
-                            <li><strong className="text-gray-200">Historical:</strong> {analysis.rationale?.historical}</li>
-                            <li><strong className="text-gray-200">Sentiment:</strong> {analysis.rationale?.sentiment}</li>
+                            <li><strong className="text-gray-200">History:</strong> {analysis.rationale?.historical}</li>
                           </ul>
                         )}
                       </div>
 
                       {/* INVALIDATION */}
                       {analysis.direction !== 'no_trade' && analysis.invalidation && (
-                        <div className="bg-red-500/5 border border-red-500/10 p-3 rounded-lg">
-                           <p className="text-[9px] text-red-400 uppercase tracking-widest mb-1">Invalidation Condition</p>
+                        <div className="bg-red-500/5 border border-red-500/10 p-3 rounded-lg text-center">
+                           <p className="text-[9px] text-red-400 uppercase tracking-widest mb-1">Batal Jika</p>
                            <p className="text-xs text-gray-300">{analysis.invalidation}</p>
                         </div>
                       )}
@@ -426,7 +431,7 @@ export default function Dashboard() {
                     </div>
                   ) : (
                     <div className="text-center py-20 opacity-30">
-                      <p className="text-sm font-serif italic text-gray-400 tracking-wider">Select an event to<br/>generate signal.</p>
+                      <p className="text-sm font-serif italic text-gray-400 tracking-wider">Select an event to<br/>generate execution signal.</p>
                     </div>
                   )}
                 </div>
@@ -564,7 +569,7 @@ export default function Dashboard() {
         <div className="fixed inset-0 bg-black/90 backdrop-blur-xl flex items-center justify-center p-4 z-50 animate-in fade-in duration-300">
           <div className="bg-[#0a0a0a] p-8 rounded-2xl w-full max-w-sm border border-white/10 shadow-[0_0_50px_rgba(212,175,55,0.1)] animate-in zoom-in-95">
             <div className="mb-6 text-center">
-              <h3 className="text-lg font-serif text-white tracking-widest uppercase mb-1">Initiate Analysis</h3>
+              <h3 className="text-lg font-serif text-white tracking-widest uppercase mb-1">Generate Signal</h3>
               <p className="text-[10px] text-gray-500 tracking-wider">{selectedEvent.title}</p>
             </div>
             
@@ -579,7 +584,7 @@ export default function Dashboard() {
               <div className="flex gap-3">
                 <button type="button" onClick={() => setSelectedEvent(null)} className="flex-1 px-4 py-3 rounded-xl text-gray-500 hover:text-white text-xs font-bold tracking-widest transition-colors">CANCEL</button>
                 <button type="submit" disabled={isAnalyzing} className="flex-[2] bg-[#D4AF37] hover:bg-[#c4a030] text-black px-4 py-3 rounded-xl text-xs font-bold tracking-widest transition-all disabled:opacity-50">
-                  {isAnalyzing ? 'PROCESSING...' : 'GENERATE'}
+                  {isAnalyzing ? 'CALCULATING...' : 'GET SIGNAL'}
                 </button>
               </div>
             </form>

@@ -9,41 +9,38 @@ export async function POST(req: Request) {
     }
 
     const systemPrompt = `
-      Anda adalah seorang Senior Quantitative Analyst di Hedge Fund global.
-      Tugas Anda adalah mengevaluasi berita ekonomi dan memberikan sinyal trading berprobabilitas tinggi.
+      Anda adalah seorang Senior Forex Trader institusional. Tugas Anda adalah memberikan sinyal trading (BUY/SELL) yang SIAP EKSEKUSI berdasarkan berita ekonomi dan harga saat ini.
       
-      ATURAN KETAT (WAJIB DIPATUHI):
-      1. RELEVANSI: Hitung "relevance_score" (0-100). Seberapa kuat berita (currency/negara) mempengaruhi pair yang dipilih? 
-         - Contoh: Berita GDP Arab Saudi TIDAK relevan dengan XAU/USD (skor < 30). Jika skor < 50, Anda WAJIB mengeluarkan "direction": "no_trade".
-      2. STRUKTUR EKSEKUSI: Jika direction "buy" atau "sell", Anda WAJIB memberikan "entry_zone", "stop_loss", "take_profit", dan "timeframe" (Scalping/Swing).
-      3. INVALIDASI: Berikan kondisi harga pasti yang membuat sinyal ini batal.
-      4. RISIKO: Berikan "risk_score" (0-100). 100 = sangat berbahaya (whipsaw tinggi).
-      5. RATIONALE: Jangan pakai paragraf panjang. Berikan poin-poin singkat: (a) Arah surprise, (b) Deviasi ekspektasi, (c) Sensitivitas historis.
+      ATURAN KETAT:
+      1. Anda HARUS memberikan "direction" berupa "buy" atau "sell" (Hindari "no_trade" kecuali berita benar-benar 0% korelasinya dengan pair, misal: GDP Arab vs EUR/USD).
+      2. Anda WAJIB menghitung dan memberikan level pasti untuk "entry_zone", "stop_loss", dan "take_profit" berdasarkan "current_price" yang diberikan.
+      3. Hitung Risk/Reward Ratio (RR) minimal 1:1.5.
+      4. Tentukan "timeframe" (Scalping, Intraday, atau Swing).
+      5. Berikan alasan singkat (Surprise, Historical, Sentiment).
 
       Output HARUS berupa JSON valid dengan skema berikut:
       {
+        "direction": "buy" | "sell",
+        "confidence": 80,
         "relevance_score": 85,
-        "direction": "buy" | "sell" | "no_trade",
-        "confidence": 75,
         "risk_score": 40,
-        "timeframe": "Swing (1-3 hari)",
-        "entry_zone": "2350 - 2355",
-        "stop_loss": "2340",
-        "take_profit": "2380",
-        "invalidation": "Harga close di bawah 2335",
+        "timeframe": "Intraday",
+        "entry_zone": "1.0850 - 1.0855",
+        "stop_loss": "1.0820",
+        "take_profit": "1.0910",
+        "invalidation": "Harga close di bawah 1.0800",
         "rationale": {
-          "surprise": "CPI naik 0.2% di atas ekspektasi",
-          "historical": "XAU/USD historisnya turun 30 pips dalam 15 menit setelah CPI AS",
+          "surprise": "CPI naik di atas ekspektasi",
+          "historical": "Pair ini historisnya turun 30 pips pasca CPI AS",
           "sentiment": "USD sedang kuat minggu ini"
-        },
-        "no_trade_reason": "Korelasi lemah" // Isi jika direction no_trade
+        }
       }
     `;
 
     const userPayload = {
       event: event,
       marketContext: marketContext,
-      instruction: "Analisis korelasi dan berikan output JSON."
+      instruction: "Berikan sinyal trading dan level eksekusi (Entry, SL, TP) berdasarkan data ini."
     };
 
     const res = await fetch('https://api.deepseek.com/chat/completions', {
@@ -59,7 +56,7 @@ export async function POST(req: Request) {
           { role: 'user', content: JSON.stringify(userPayload) },
         ],
         response_format: { type: 'json_object' },
-        temperature: 0.1, // Dibuat sangat rendah agar AI tidak berhalusinasi
+        temperature: 0.2,
       }),
     });
 
@@ -69,14 +66,8 @@ export async function POST(req: Request) {
     if (!raw) throw new Error('Empty response from AI');
 
     const parsed = JSON.parse(raw);
-
-    // Guardrail: Jika relevansi rendah, paksa no_trade
-    if (parsed.relevance_score < 50) {
-      parsed.direction = 'no_trade';
-      parsed.no_trade_reason = 'Relevance score too low. Event does not directly impact this pair.';
-    }
-
     return NextResponse.json(parsed);
+    
   } catch (error: any) {
     return NextResponse.json({ error: error.message }, { status: 500 });
   }
