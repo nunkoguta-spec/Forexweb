@@ -8,7 +8,7 @@ const supabaseKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || '';
 const supabase = createClient(supabaseUrl, supabaseKey);
 
 export default function Dashboard() {
-  const [activeTab, setActiveTab] = useState<'calendar' | 'history' | 'performance'>('calendar');
+  const [activeTab, setActiveTab] = useState<'calendar' | 'history' | 'performance' | 'calculator'>('calendar');
   const [marketData, setMarketData] = useState<any>(null);
   const [events, setEvents] = useState<any[]>([]);
   const [savedHistory, setSavedHistory] = useState<any[]>([]);
@@ -28,6 +28,11 @@ export default function Dashboard() {
   // State Filter Tanggal & Error
   const [dateFilter, setDateFilter] = useState<'yesterday' | 'today' | 'tomorrow'>('today');
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
+
+  // State Kalkulator Risiko
+  const [calcBalance, setCalcBalance] = useState<number | ''>(1000);
+  const [calcRisk, setCalcRisk] = useState<number | ''>(1);
+  const [calcSl, setCalcSl] = useState<number | ''>(20);
 
   // --- EFEK LIVE POLLING ---
   useEffect(() => {
@@ -182,6 +187,13 @@ export default function Dashboard() {
   const winRate = totalTrades > 0 ? ((wins / (wins + losses)) * 100).toFixed(1) : "0.0";
   const totalPips = filteredJournal.reduce((acc, curr) => acc + (Number(curr.pips) || 0), 0);
 
+  // --- LOGIKA KALKULATOR RISIKO ---
+  const riskAmountUSD = (Number(calcBalance) * Number(calcRisk)) / 100;
+  // Asumsi 1 Standard Lot = $10 per pip (untuk pair mayor standar)
+  const lotSizeStandard = riskAmountUSD / (Number(calcSl) * 10);
+  const lotSizeMini = lotSizeStandard * 10;
+  const lotSizeMicro = lotSizeStandard * 100;
+
   return (
     <div className="min-h-screen flex flex-col bg-[#09090b]">
       
@@ -198,7 +210,8 @@ export default function Dashboard() {
               {[
                 { id: 'calendar', label: 'Terminal' },
                 { id: 'history', label: 'Arsip Data' },
-                { id: 'performance', label: 'Jurnal & Performa' }
+                { id: 'performance', label: 'Jurnal & Performa' },
+                { id: 'calculator', label: 'Kalkulator Risiko' } // TAB BARU
               ].map((tab) => (
                 <button
                   key={tab.id}
@@ -243,7 +256,7 @@ export default function Dashboard() {
       {/* KONTEN UTAMA */}
       <main className="flex-1 max-w-[1400px] w-full mx-auto px-6 py-8">
         
-        {/* NOTIFIKASI ERROR (Jika API Gagal) */}
+        {/* NOTIFIKASI ERROR */}
         {errorMessage && (
           <div className="mb-6 p-4 bg-red-500/10 border border-red-500/20 rounded-xl flex items-center gap-3 animate-in fade-in">
             <svg className="w-5 h-5 text-red-400 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
@@ -495,6 +508,81 @@ export default function Dashboard() {
                     ))}
                   </tbody>
                 </table>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* TAB 4: KALKULATOR RISIKO */}
+        {activeTab === 'calculator' && (
+          <div className="max-w-3xl mx-auto animate-in fade-in slide-in-from-bottom-4 duration-500">
+            <div className="bg-[#121214] border border-white/5 rounded-2xl overflow-hidden shadow-2xl">
+              <div className="p-6 border-b border-white/5 bg-gradient-to-r from-blue-600/10 to-transparent">
+                <h2 className="text-xl font-bold text-white mb-1">Kalkulator Risiko & Lot Size</h2>
+                <p className="text-sm text-slate-400">Hitung ukuran lot yang tepat berdasarkan modal dan persentase risiko Anda.</p>
+              </div>
+              
+              <div className="p-6 grid grid-cols-1 md:grid-cols-2 gap-8">
+                {/* Input Section */}
+                <div className="space-y-5">
+                  <div>
+                    <label className="block text-sm font-medium text-slate-400 mb-2">Modal (USD)</label>
+                    <input 
+                      type="number" 
+                      value={calcBalance} 
+                      onChange={(e) => setCalcBalance(e.target.value === '' ? '' : Number(e.target.value))}
+                      className="w-full bg-[#09090b] p-3 rounded-xl border border-white/10 text-white outline-none focus:border-blue-500/50 font-mono text-lg"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium text-slate-400 mb-2">Risiko per Trade (%)</label>
+                    <input 
+                      type="number" 
+                      value={calcRisk} 
+                      onChange={(e) => setCalcRisk(e.target.value === '' ? '' : Number(e.target.value))}
+                      className="w-full bg-[#09090b] p-3 rounded-xl border border-white/10 text-white outline-none focus:border-blue-500/50 font-mono text-lg"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium text-slate-400 mb-2">Stop Loss (Pips)</label>
+                    <input 
+                      type="number" 
+                      value={calcSl} 
+                      onChange={(e) => setCalcSl(e.target.value === '' ? '' : Number(e.target.value))}
+                      className="w-full bg-[#09090b] p-3 rounded-xl border border-white/10 text-white outline-none focus:border-blue-500/50 font-mono text-lg"
+                    />
+                  </div>
+                  <div className="p-4 bg-blue-500/10 border border-blue-500/20 rounded-xl">
+                    <p className="text-xs text-blue-400 font-medium mb-1">Asumsi:</p>
+                    <p className="text-xs text-slate-400 leading-relaxed">1 Standard Lot = $10 / pip. (Cocok untuk mayor pair seperti EUR/USD, GBP/USD, dll).</p>
+                  </div>
+                </div>
+
+                {/* Hasil Section */}
+                <div className="bg-[#09090b] rounded-xl p-6 border border-white/5 flex flex-col justify-center space-y-6">
+                  <div className="text-center">
+                    <p className="text-sm text-slate-400 mb-1">Nominal Risiko</p>
+                    <p className="text-3xl font-black text-red-400 font-mono">${riskAmountUSD.toFixed(2)}</p>
+                  </div>
+                  
+                  <div className="h-px w-full bg-white/10"></div>
+
+                  <div className="text-center">
+                    <p className="text-sm text-slate-400 mb-1">Ukuran Lot (Standard)</p>
+                    <p className="text-4xl font-black text-blue-400 font-mono">{lotSizeStandard.toFixed(2)}</p>
+                  </div>
+
+                  <div className="grid grid-cols-2 gap-4 pt-2">
+                    <div className="text-center p-3 bg-white/5 rounded-lg">
+                      <p className="text-xs text-slate-500 mb-1">Mini Lots (0.1)</p>
+                      <p className="text-xl font-bold text-slate-300 font-mono">{lotSizeMini.toFixed(1)}</p>
+                    </div>
+                    <div className="text-center p-3 bg-white/5 rounded-lg">
+                      <p className="text-xs text-slate-500 mb-1">Micro Lots (0.01)</p>
+                      <p className="text-xl font-bold text-slate-300 font-mono">{lotSizeMicro.toFixed(0)}</p>
+                    </div>
+                  </div>
+                </div>
               </div>
             </div>
           </div>
