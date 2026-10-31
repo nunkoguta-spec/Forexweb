@@ -17,6 +17,7 @@ export default function Dashboard() {
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [selectedEvent, setSelectedEvent] = useState<any>(null);
   const [analysis, setAnalysis] = useState<any>(null);
+  const [selectedPair, setSelectedPair] = useState<string>('XAU/USD'); // State untuk melacak pair di modal
   
   // State Jurnal & Filter
   const [isSavingTrade, setIsSavingTrade] = useState(false);
@@ -134,20 +135,37 @@ export default function Dashboard() {
   }
 
   async function handleAnalyze(e: React.FormEvent) {
-    e.preventDefault(); setIsAnalyzing(true); setAnalysis(null);
-    const form = e.target as HTMLFormElement;
-    const pair = (form.elements.namedItem('pair') as HTMLSelectElement).value;
-    let price = marketData?.[pair]?.price || "Unknown";
+    e.preventDefault(); 
+    setIsAnalyzing(true); 
+    setAnalysis(null);
+    
+    const currentPrice = marketData?.[selectedPair]?.price;
+
+    if (!currentPrice || currentPrice === '...') {
+       alert("Harga Live tidak tersedia. Pastikan API Key Twelve Data sudah benar di Vercel.");
+       setIsAnalyzing(false);
+       return;
+    }
 
     try {
       const res = await fetch('/api/analyze', {
         method: 'POST',
-        body: JSON.stringify({ event: selectedEvent, marketContext: { pair, current_price: price, trend: "Unknown" } }),
+        body: JSON.stringify({ 
+          event: selectedEvent, 
+          marketContext: { 
+            pair: selectedPair, 
+            current_price: currentPrice, 
+            trend: "Unknown" 
+          } 
+        }),
       });
       const data = await res.json();
       if (data.error) throw new Error(data.error);
-      setAnalysis({ ...data, pair, current_price: price });
-    } catch (err: any) { alert('Gagal: ' + err.message); }
+      
+      setAnalysis({ ...data, pair: selectedPair, current_price: currentPrice });
+    } catch (err: any) { 
+      alert('Gagal: ' + err.message); 
+    }
     setIsAnalyzing(false);
   }
 
@@ -190,11 +208,10 @@ export default function Dashboard() {
   const lotSizeStandard = riskAmountUSD / (Number(calcSl) * 10);
   const highImpactToday = filteredByDate.filter(e => e.impact === 'High').length;
 
-  // Kalkulasi RR Sederhana untuk UI
+  // Kalkulasi RR
   let rrRatio = "0";
   if (analysis && analysis.direction !== 'no_trade' && analysis.entry_zone && analysis.stop_loss && analysis.take_profit) {
-    // Kita parsing angka jika formatnya string seperti "1.0850 - 1.0855"
-    const parseNum = (str: string) => parseFloat(str.split('-')[0].replace(/[^0-9.]/g, ''));
+    const parseNum = (str: string) => parseFloat(String(str).split('-')[0].replace(/[^0-9.]/g, ''));
     const entry = parseNum(analysis.entry_zone);
     const sl = parseNum(analysis.stop_loss);
     const tp = parseNum(analysis.take_profit);
@@ -339,7 +356,11 @@ export default function Dashboard() {
                           </td>
                           <td className="px-6 py-4 text-right">
                             <button 
-                              onClick={() => { setSelectedEvent(ev); setAnalysis(null); }} 
+                              onClick={() => { 
+                                setSelectedEvent(ev); 
+                                setAnalysis(null); 
+                                setSelectedPair(ev.country === 'USD' ? 'XAU/USD' : 'EUR/USD'); // Auto select pair yang relevan
+                              }} 
                               className="opacity-0 group-hover:opacity-100 border border-white/10 text-white hover:bg-[#D4AF37] hover:border-[#D4AF37] hover:text-black px-4 py-1.5 rounded-lg text-xs tracking-wider transition-all"
                             >
                               Analyze
@@ -364,7 +385,6 @@ export default function Dashboard() {
                   {analysis ? (
                     <div className="space-y-5 animate-in fade-in duration-300">
                       
-                      {/* UTAMA: ARAH TRADING */}
                       <div className={`p-6 rounded-xl border flex flex-col items-center justify-center text-center ${
                         analysis.direction === 'buy' ? 'bg-green-500/5 border-green-500/20' : 
                         analysis.direction === 'sell' ? 'bg-red-500/5 border-red-500/20' : 
@@ -375,10 +395,9 @@ export default function Dashboard() {
                           analysis.direction === 'buy' ? 'text-green-400' : 
                           analysis.direction === 'sell' ? 'text-red-400' : 'text-gray-300'
                         }`}>{analysis.direction}</p>
-                        <p className="text-xs text-gray-500 mt-2">Confidence: {(analysis.confidence)}%</p>
+                        <p className="text-xs text-gray-500 mt-2">Live Price: {analysis.current_price}</p>
                       </div>
 
-                      {/* LEVEL TRADING (ENTRY, SL, TP) */}
                       {analysis.direction !== 'no_trade' && (
                         <div className="bg-[#111] border border-white/5 rounded-xl p-4 space-y-3">
                            <div className="flex justify-between items-center border-b border-white/5 pb-2">
@@ -400,7 +419,6 @@ export default function Dashboard() {
                         </div>
                       )}
 
-                      {/* RATIONALE SINGKAT */}
                       <div>
                         <h3 className="text-[10px] text-gray-500 uppercase tracking-[0.2em] mb-2">Trade Rationale</h3>
                         {analysis.direction === 'no_trade' ? (
@@ -413,7 +431,6 @@ export default function Dashboard() {
                         )}
                       </div>
 
-                      {/* INVALIDATION */}
                       {analysis.direction !== 'no_trade' && analysis.invalidation && (
                         <div className="bg-red-500/5 border border-red-500/10 p-3 rounded-lg text-center">
                            <p className="text-[9px] text-red-400 uppercase tracking-widest mb-1">Batal Jika</p>
@@ -421,7 +438,6 @@ export default function Dashboard() {
                         </div>
                       )}
                       
-                      {/* ACTION BUTTONS */}
                       <div className="pt-4 border-t border-white/5">
                         <div className="flex gap-3">
                           <button onClick={() => saveTradeToJournal('win')} disabled={isSavingTrade} className="flex-1 border border-green-500/20 text-green-400 hover:bg-green-500 hover:text-black py-2.5 rounded-lg text-xs font-bold tracking-widest transition-all">WIN</button>
@@ -575,12 +591,26 @@ export default function Dashboard() {
             
             <form onSubmit={handleAnalyze} className="space-y-5">
               <div>
-                <select name="pair" className="w-full bg-[#050505] p-3 rounded-xl border border-white/5 text-white text-center font-mono tracking-widest outline-none focus:border-[#D4AF37]/50 text-sm">
+                <label className="block text-[10px] text-gray-500 uppercase tracking-widest mb-2 text-center">Pilih Pair</label>
+                <select 
+                  value={selectedPair}
+                  onChange={(e) => setSelectedPair(e.target.value)}
+                  className="w-full bg-[#050505] p-3 rounded-xl border border-white/5 text-white text-center font-mono tracking-widest outline-none focus:border-[#D4AF37]/50 text-sm"
+                >
                   <option value="EUR/USD">EUR/USD</option>
                   <option value="XAU/USD">XAU/USD (Gold)</option>
                   <option value="USD/JPY">USD/JPY</option>
                 </select>
               </div>
+
+              {/* LIVE PRICE BOX */}
+              <div className="bg-[#111] p-3 rounded-xl border border-white/5 text-center">
+                <p className="text-[9px] text-gray-500 uppercase tracking-widest mb-1">Harga Live Saat Ini</p>
+                <p className={`text-lg font-mono font-bold ${marketData?.[selectedPair]?.price ? 'text-[#D4AF37]' : 'text-red-400'}`}>
+                  {marketData?.[selectedPair]?.price || 'Tidak Tersedia'}
+                </p>
+              </div>
+
               <div className="flex gap-3">
                 <button type="button" onClick={() => setSelectedEvent(null)} className="flex-1 px-4 py-3 rounded-xl text-gray-500 hover:text-white text-xs font-bold tracking-widest transition-colors">CANCEL</button>
                 <button type="submit" disabled={isAnalyzing} className="flex-[2] bg-[#D4AF37] hover:bg-[#c4a030] text-black px-4 py-3 rounded-xl text-xs font-bold tracking-widest transition-all disabled:opacity-50">

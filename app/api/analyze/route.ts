@@ -8,39 +8,41 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: 'DeepSeek API Key missing' }, { status: 500 });
     }
 
-    const systemPrompt = `
-      Anda adalah seorang Senior Forex Trader institusional. Tugas Anda adalah memberikan sinyal trading (BUY/SELL) yang SIAP EKSEKUSI berdasarkan berita ekonomi dan harga saat ini.
-      
-      ATURAN KETAT:
-      1. Anda HARUS memberikan "direction" berupa "buy" atau "sell" (Hindari "no_trade" kecuali berita benar-benar 0% korelasinya dengan pair, misal: GDP Arab vs EUR/USD).
-      2. Anda WAJIB menghitung dan memberikan level pasti untuk "entry_zone", "stop_loss", dan "take_profit" berdasarkan "current_price" yang diberikan.
-      3. Hitung Risk/Reward Ratio (RR) minimal 1:1.5.
-      4. Tentukan "timeframe" (Scalping, Intraday, atau Swing).
-      5. Berikan alasan singkat (Surprise, Historical, Sentiment).
+    const currentPrice = marketContext?.current_price;
 
-      Output HARUS berupa JSON valid dengan skema berikut:
+    if (!currentPrice || currentPrice === "Unknown" || isNaN(parseFloat(currentPrice))) {
+      return NextResponse.json({ error: 'Harga live tidak tersedia. Cek Twelve Data API Key Anda.' }, { status: 400 });
+    }
+
+    const systemPrompt = `
+      Anda adalah Senior Trader Institusional. 
+      
+      ATURAN MUTLAK:
+      1. Harga saat ini (Current Price) untuk ${marketContext.pair} adalah ${currentPrice}. INI ADALAH HARGA REAL-TIME YANG 100% AKURAT.
+      2. DILARANG KERAS menggunakan harga dari pengetahuan lama Anda (jangan pakai harga Emas 2000 jika current price adalah 4000).
+      3. "entry_zone" HARUS berada dalam jarak 0.5% dari ${currentPrice}.
+      4. Jika direction "buy", maka Stop Loss < Entry < Take Profit. Jika "sell", maka Take Profit < Entry < Stop Loss.
+      5. Berikan output JSON valid.
+
+      Skema Output:
       {
         "direction": "buy" | "sell",
         "confidence": 80,
         "relevance_score": 85,
         "risk_score": 40,
         "timeframe": "Intraday",
-        "entry_zone": "1.0850 - 1.0855",
-        "stop_loss": "1.0820",
-        "take_profit": "1.0910",
-        "invalidation": "Harga close di bawah 1.0800",
-        "rationale": {
-          "surprise": "CPI naik di atas ekspektasi",
-          "historical": "Pair ini historisnya turun 30 pips pasca CPI AS",
-          "sentiment": "USD sedang kuat minggu ini"
-        }
+        "entry_zone": "HARGA (Angka saja, contoh: 4036.81)",
+        "stop_loss": "HARGA",
+        "take_profit": "HARGA",
+        "invalidation": "String",
+        "rationale": { "surprise": "String", "historical": "String", "sentiment": "String" }
       }
     `;
 
     const userPayload = {
       event: event,
-      marketContext: marketContext,
-      instruction: "Berikan sinyal trading dan level eksekusi (Entry, SL, TP) berdasarkan data ini."
+      current_price: currentPrice,
+      instruction: "Berikan sinyal trading berdasarkan Current Price yang diberikan."
     };
 
     const res = await fetch('https://api.deepseek.com/chat/completions', {
@@ -56,7 +58,7 @@ export async function POST(req: Request) {
           { role: 'user', content: JSON.stringify(userPayload) },
         ],
         response_format: { type: 'json_object' },
-        temperature: 0.2,
+        temperature: 0.1,
       }),
     });
 
