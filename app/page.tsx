@@ -21,7 +21,7 @@ export default function Dashboard() {
   // State Jurnal & Filter
   const [isSavingTrade, setIsSavingTrade] = useState(false);
   const [filterMonth, setFilterMonth] = useState('');
-  const [filterImpact, setFilterImpact] = useState<'all' | 'High' | 'Medium'>('all');
+  const [focusMode, setFocusMode] = useState(false); // New: High Impact Only
   const [currentTime, setCurrentTime] = useState('');
   const [dateFilter, setDateFilter] = useState<'yesterday' | 'today' | 'tomorrow'>('today');
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
@@ -96,7 +96,7 @@ export default function Dashboard() {
           locale: "id",
           toolbar_bg: "#050505",
           enable_publishing: false,
-          hide_top_toolbar: true, // Disembunyikan agar lebih bersih & eksklusif
+          hide_top_toolbar: true,
           hide_legend: true,
           save_image: false,
           container_id: chartContainerRef.current?.id,
@@ -153,7 +153,7 @@ export default function Dashboard() {
 
   async function saveTradeToJournal(result: 'win' | 'loss') {
     if (!analysis) return; setIsSavingTrade(true);
-    let pips = result === 'win' ? 20 : -15; 
+    let pips = result === 'win' ? 20 : -15; // Bisa disesuaikan nanti dengan TP/SL AI
     const { error } = await supabase.from('trade_journal').insert([{
       pair: analysis.pair, direction: analysis.direction, result: result, pips: pips, notes: `Berita: ${selectedEvent.title}`
     }]);
@@ -174,9 +174,9 @@ export default function Dashboard() {
     return true;
   });
 
+  // Terapkan Focus Mode
   const importantEvents = filteredByDate.filter(e => {
-    if (filterImpact === 'High') return e.impact === 'High';
-    if (filterImpact === 'Medium') return e.impact === 'Medium';
+    if (focusMode) return e.impact === 'High';
     return e.impact === 'High' || e.impact === 'Medium';
   });
 
@@ -190,111 +190,111 @@ export default function Dashboard() {
   const riskAmountUSD = (Number(calcBalance) * Number(calcRisk)) / 100;
   const lotSizeStandard = riskAmountUSD / (Number(calcSl) * 10);
 
+  // Daily Briefing (Hitung berita High Impact hari ini)
+  const highImpactToday = filteredByDate.filter(e => e.impact === 'High').length;
+
   return (
-    <div className="min-h-screen flex flex-col bg-[#050505] font-sans selection:bg-[#D4AF37]/30">
+    <div className="min-h-screen flex flex-col bg-[#050505] font-sans selection:bg-[#D4AF37]/30 pb-10">
       
-      {/* HEADER - EXCLUSIVE STYLE */}
+      {/* HEADER */}
       <header className="border-b border-white/5 bg-[#050505]/80 backdrop-blur-2xl sticky top-0 z-40">
-        <div className="max-w-[1500px] mx-auto px-8 h-20 flex items-center justify-between">
-          <div className="flex items-center gap-12">
-            <div className="flex items-center gap-4">
-              <div className="w-8 h-8 rounded-full border border-[#D4AF37]/50 flex items-center justify-center font-serif text-sm text-[#D4AF37] shadow-[0_0_15px_rgba(212,175,55,0.2)]">F</div>
-              <span className="text-lg font-serif text-white tracking-[0.2em] uppercase">Forex Intel</span>
+        <div className="max-w-[1500px] mx-auto px-6 h-20 flex items-center justify-between">
+          <div className="flex items-center gap-10">
+            <div className="flex items-center gap-3">
+              <div className="w-8 h-8 rounded-full border border-[#D4AF37]/50 flex items-center justify-center font-serif text-sm text-[#D4AF37]">F</div>
+              <span className="text-lg font-serif text-white tracking-[0.2em] uppercase hidden sm:block">Forex Intel</span>
             </div>
             
             <nav className="hidden lg:flex gap-1">
-              {[
-                { id: 'calendar', label: 'Terminal' },
-                { id: 'history', label: 'Arsip' },
-                { id: 'performance', label: 'Jurnal' },
-                { id: 'calculator', label: 'Kalkulator' }
-              ].map((tab) => (
+              {['calendar', 'history', 'performance', 'calculator'].map((tab) => (
                 <button
-                  key={tab.id}
-                  onClick={() => setActiveTab(tab.id as any)}
-                  className={`px-5 py-2 rounded-full text-xs font-medium tracking-wider uppercase transition-all duration-300 ${
-                    activeTab === tab.id 
+                  key={tab}
+                  onClick={() => setActiveTab(tab as any)}
+                  className={`px-5 py-2 rounded-full text-xs font-medium tracking-wider uppercase transition-all ${
+                    activeTab === tab 
                       ? 'bg-[#D4AF37]/10 text-[#D4AF37] border border-[#D4AF37]/30' 
                       : 'text-gray-500 hover:text-white border border-transparent'
                   }`}
                 >
-                  {tab.label}
+                  {tab === 'calendar' ? 'Terminal' : tab === 'history' ? 'Arsip' : tab === 'performance' ? 'Jurnal' : 'Kalkulator'}
                 </button>
               ))}
             </nav>
           </div>
 
-          <div className="flex items-center gap-8">
-            <div className="hidden sm:flex flex-col items-end border-r border-white/10 pr-8">
+          <div className="flex items-center gap-6">
+            <div className="hidden sm:flex flex-col items-end border-r border-white/10 pr-6">
               <span className="text-[10px] text-gray-500 uppercase tracking-[0.2em] mb-1">Local Time</span>
               <span className="text-sm font-mono text-white">{currentTime}</span>
             </div>
-            
-            <div className="flex gap-8">
-              <div className="flex flex-col items-end group cursor-default">
-                <span className="text-[10px] text-gray-500 uppercase tracking-[0.2em] mb-1 group-hover:text-[#D4AF37] transition-colors">Gold</span>
+            <div className="flex gap-6">
+              <div className="flex flex-col items-end">
+                <span className="text-[10px] text-gray-500 uppercase tracking-[0.2em] mb-1">Gold</span>
                 <strong className="text-lg font-mono text-white tracking-tight">{marketData?.['XAU/USD']?.price || '...'}</strong>
-              </div>
-              <div className="flex flex-col items-end group cursor-default">
-                <span className="text-[10px] text-gray-500 uppercase tracking-[0.2em] mb-1 group-hover:text-[#D4AF37] transition-colors">Euro</span>
-                <strong className="text-lg font-mono text-white tracking-tight">{marketData?.['EUR/USD']?.price || '...'}</strong>
               </div>
             </div>
           </div>
         </div>
       </header>
 
-      {/* COUNTDOWN BANNER */}
-      {nextHighImpact && (
-        <div className="bg-[#D4AF37]/5 border-b border-[#D4AF37]/10">
-          <div className="max-w-[1500px] mx-auto px-8 py-2 flex items-center justify-between">
-            <div className="flex items-center gap-3">
-              <span className="animate-pulse w-1.5 h-1.5 rounded-full bg-[#D4AF37]"></span>
-              <span className="text-xs text-gray-400 tracking-wide uppercase">Next Catalyst: <strong className="text-white">{nextHighImpact.title}</strong></span>
-            </div>
-            <div className="font-mono text-sm text-[#D4AF37] tracking-[0.2em]">
-              T-MINUS {countdown}
-            </div>
+      {/* DAILY BRIEFING & COUNTDOWN */}
+      <div className="bg-[#D4AF37]/5 border-b border-[#D4AF37]/10">
+        <div className="max-w-[1500px] mx-auto px-6 py-3 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
+          <div className="flex items-center gap-4 text-xs tracking-wider text-gray-400">
+            <span className="bg-[#D4AF37]/20 text-[#D4AF37] px-3 py-1 rounded-full uppercase font-bold">Daily Briefing</span>
+            <span>Ada <strong className="text-white">{highImpactToday} berita High Impact</strong> untuk tanggal ini.</span>
           </div>
+          
+          {nextHighImpact && (
+            <div className="flex items-center gap-3">
+              <span className="text-xs text-gray-400 uppercase tracking-widest">Next Catalyst:</span>
+              <span className="text-xs text-white font-bold">{nextHighImpact.title}</span>
+              <div className="font-mono text-sm text-[#D4AF37] tracking-widest bg-[#D4AF37]/10 px-3 py-1 rounded-lg">
+                T-MINUS {countdown}
+              </div>
+            </div>
+          )}
         </div>
-      )}
+      </div>
 
-      {/* KONTEN UTAMA */}
-      <main className="flex-1 max-w-[1500px] w-full mx-auto px-8 py-10">
-        
+      <main className="flex-1 max-w-[1500px] w-full mx-auto px-6 py-8">
         {errorMessage && (
-          <div className="mb-8 p-4 bg-red-900/10 border border-red-500/20 rounded-xl text-red-400 text-sm tracking-wide">
+          <div className="mb-6 p-4 bg-red-900/10 border border-red-500/20 rounded-xl text-red-400 text-sm">
             {errorMessage}
           </div>
         )}
 
         {/* TAB 1: TERMINAL */}
         {activeTab === 'calendar' && (
-          <div className="grid grid-cols-1 xl:grid-cols-12 gap-10 animate-in fade-in duration-700">
+          <div className="grid grid-cols-1 xl:grid-cols-12 gap-8 animate-in fade-in duration-500">
             
-            <div className="xl:col-span-8 flex flex-col gap-10">
-              
-              {/* CHART SECTION */}
-              <div className="bg-[#0a0a0a] border border-white/5 rounded-3xl overflow-hidden shadow-2xl relative">
-                <div className="absolute top-6 left-8 z-10 pointer-events-none">
-                  <h2 className="text-sm font-serif text-white tracking-widest uppercase">Gold Spot / U.S. Dollar</h2>
-                  <p className="text-[10px] text-gray-500 tracking-widest mt-1">Institutional Feed</p>
+            <div className="xl:col-span-8 flex flex-col gap-8">
+              {/* CHART */}
+              <div className="bg-[#0a0a0a] border border-white/5 rounded-2xl overflow-hidden shadow-2xl relative">
+                <div className="absolute top-4 left-6 z-10 pointer-events-none">
+                  <h2 className="text-sm font-serif text-white tracking-widest uppercase">XAU/USD Live</h2>
                 </div>
-                <div id="tradingview_chart" ref={chartContainerRef} className="w-full h-[450px]" />
+                <div id="tradingview_chart" ref={chartContainerRef} className="w-full h-[350px]" />
               </div>
 
-              {/* JADWAL SECTION */}
-              <div className="bg-[#0a0a0a] border border-white/5 rounded-3xl overflow-hidden shadow-2xl">
-                <div className="p-8 border-b border-white/5 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-6">
+              {/* JADWAL & FOCUS MODE */}
+              <div className="bg-[#0a0a0a] border border-white/5 rounded-2xl overflow-hidden shadow-2xl">
+                <div className="p-5 border-b border-white/5 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
                   <div>
-                    <h2 className="text-lg font-serif text-white tracking-widest uppercase">Economic Catalyst</h2>
-                    <p className="text-xs text-gray-500 tracking-wider mt-1">High & Medium Impact Only</p>
+                    <h2 className="text-base font-serif text-white tracking-widest uppercase">Economic Catalyst</h2>
+                    <div className="flex items-center gap-2 mt-2">
+                      <button onClick={() => setDateFilter('yesterday')} className={`px-3 py-1 text-[10px] uppercase font-bold rounded ${dateFilter === 'yesterday' ? 'bg-[#D4AF37]/20 text-[#D4AF37]' : 'text-gray-500'}`}>Yesterday</button>
+                      <button onClick={() => setDateFilter('today')} className={`px-3 py-1 text-[10px] uppercase font-bold rounded ${dateFilter === 'today' ? 'bg-[#D4AF37]/20 text-[#D4AF37]' : 'text-gray-500'}`}>Today</button>
+                      <button onClick={() => setDateFilter('tomorrow')} className={`px-3 py-1 text-[10px] uppercase font-bold rounded ${dateFilter === 'tomorrow' ? 'bg-[#D4AF37]/20 text-[#D4AF37]' : 'text-gray-500'}`}>Tomorrow</button>
+                    </div>
                   </div>
                   
-                  <div className="flex items-center gap-1 bg-[#050505] p-1 rounded-xl border border-white/5">
-                    <button onClick={() => setDateFilter('yesterday')} className={`px-5 py-2 text-[10px] uppercase tracking-widest font-medium rounded-lg transition-all ${dateFilter === 'yesterday' ? 'bg-[#D4AF37]/20 text-[#D4AF37]' : 'text-gray-500 hover:text-white'}`}>Yesterday</button>
-                    <button onClick={() => setDateFilter('today')} className={`px-5 py-2 text-[10px] uppercase tracking-widest font-medium rounded-lg transition-all ${dateFilter === 'today' ? 'bg-[#D4AF37]/20 text-[#D4AF37]' : 'text-gray-500 hover:text-white'}`}>Today</button>
-                    <button onClick={() => setDateFilter('tomorrow')} className={`px-5 py-2 text-[10px] uppercase tracking-widest font-medium rounded-lg transition-all ${dateFilter === 'tomorrow' ? 'bg-[#D4AF37]/20 text-[#D4AF37]' : 'text-gray-500 hover:text-white'}`}>Tomorrow</button>
+                  {/* TOGGLE FOCUS MODE */}
+                  <div className="flex items-center gap-3 bg-[#111] px-4 py-2 rounded-xl border border-white/5 cursor-pointer" onClick={() => setFocusMode(!focusMode)}>
+                    <div className={`w-8 h-4 rounded-full relative transition-colors ${focusMode ? 'bg-[#D4AF37]' : 'bg-gray-700'}`}>
+                      <div className={`absolute top-0.5 w-3 h-3 rounded-full bg-white transition-all ${focusMode ? 'left-4.5' : 'left-0.5'}`}></div>
+                    </div>
+                    <span className="text-[10px] uppercase tracking-widest text-gray-300">High Impact Only</span>
                   </div>
                 </div>
 
@@ -302,35 +302,33 @@ export default function Dashboard() {
                   <table className="w-full text-left text-sm whitespace-nowrap">
                     <thead className="bg-[#050505] text-gray-500 text-[10px] uppercase tracking-[0.2em] sticky top-0 z-10 border-b border-white/5">
                       <tr>
-                        <th className="px-8 py-5 font-normal">Time (WIB)</th>
-                        <th className="px-8 py-5 font-normal">Currency</th>
-                        <th className="px-8 py-5 font-normal">Event</th>
-                        <th className="px-8 py-5 font-normal text-center">Act</th>
-                        <th className="px-8 py-5 font-normal text-right">Action</th>
+                        <th className="px-6 py-4 font-normal">Time</th>
+                        <th className="px-6 py-4 font-normal">Currency</th>
+                        <th className="px-6 py-4 font-normal">Event</th>
+                        <th className="px-6 py-4 font-normal text-right">Action</th>
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-white/5">
                       {importantEvents.length === 0 && (
-                        <tr><td colSpan={5} className="text-center py-16 text-gray-600 tracking-wide">No upcoming catalysts.</td></tr>
+                        <tr><td colSpan={4} className="text-center py-12 text-gray-600">No events found.</td></tr>
                       )}
                       {importantEvents.map((ev, i) => (
                         <tr key={i} className="hover:bg-white/[0.02] transition-colors group">
-                          <td className="px-8 py-5">
+                          <td className="px-6 py-4">
                             <div className="text-white font-mono text-sm">{formatTimeWIB(ev.date)}</div>
-                            <div className="text-[10px] text-gray-500 uppercase tracking-wider mt-1">{formatDateWIB(ev.date)}</div>
+                            <div className="text-[10px] text-gray-500 uppercase mt-0.5">{formatDateWIB(ev.date)}</div>
                           </td>
-                          <td className="px-8 py-5 font-bold text-gray-400 text-xs tracking-wider">{ev.country}</td>
-                          <td className="px-8 py-5">
+                          <td className="px-6 py-4 font-bold text-gray-400 text-xs">{ev.country}</td>
+                          <td className="px-6 py-4">
                             <div className="flex items-center gap-3">
                               <span className={`w-1.5 h-1.5 rounded-full ${ev.impact === 'High' ? 'bg-red-500 shadow-[0_0_8px_rgba(239,68,68,0.5)]' : 'bg-amber-500'}`}></span>
                               <span className="text-gray-200 text-sm">{ev.title}</span>
                             </div>
                           </td>
-                          <td className="px-8 py-5 text-center font-mono text-gray-400 text-sm">{ev.actual || '-'}</td>
-                          <td className="px-8 py-5 text-right">
+                          <td className="px-6 py-4 text-right">
                             <button 
                               onClick={() => { setSelectedEvent(ev); setAnalysis(null); }} 
-                              className="opacity-0 group-hover:opacity-100 border border-white/10 text-white hover:bg-white hover:text-black px-5 py-2 rounded-lg text-xs tracking-wider font-medium transition-all duration-300"
+                              className="opacity-0 group-hover:opacity-100 border border-white/10 text-white hover:bg-[#D4AF37] hover:border-[#D4AF37] hover:text-black px-4 py-1.5 rounded-lg text-xs tracking-wider transition-all"
                             >
                               Analyze
                             </button>
@@ -343,45 +341,92 @@ export default function Dashboard() {
               </div>
             </div>
 
-            {/* KANAN: PANEL AI */}
+            {/* KANAN: PANEL AI BARU */}
             <div className="xl:col-span-4 h-fit sticky top-32">
-              <div className="bg-[#0a0a0a] border border-white/5 rounded-3xl overflow-hidden shadow-2xl">
-                <div className="p-8 border-b border-white/5 bg-gradient-to-b from-[#D4AF37]/5 to-transparent">
-                  <h2 className="text-lg font-serif text-white tracking-widest uppercase">DeepSeek Intel</h2>
-                  <p className="text-[10px] text-gray-500 tracking-widest mt-1">Private Analysis</p>
+              <div className="bg-[#0a0a0a] border border-white/5 rounded-2xl overflow-hidden shadow-2xl">
+                <div className="p-6 border-b border-white/5 bg-gradient-to-b from-[#D4AF37]/5 to-transparent">
+                  <h2 className="text-base font-serif text-white tracking-widest uppercase">Quant Signal</h2>
                 </div>
                 
-                <div className="p-8">
+                <div className="p-6">
                   {analysis ? (
-                    <div className="space-y-8 animate-in fade-in duration-500">
-                      <div className={`p-8 rounded-2xl border flex flex-col items-center justify-center text-center ${
-                        analysis.direction === 'buy' ? 'bg-green-500/5 border-green-500/10' : 
-                        analysis.direction === 'sell' ? 'bg-red-500/5 border-red-500/10' : 
+                    <div className="space-y-6 animate-in fade-in duration-300">
+                      {/* RELEVANCE & CONFIDENCE SCORE */}
+                      <div className="flex gap-2">
+                         <div className="flex-1 bg-[#111] p-3 rounded-xl border border-white/5 text-center">
+                            <p className="text-[9px] text-gray-500 uppercase tracking-widest mb-1">Relevance</p>
+                            <p className={`font-mono text-lg ${analysis.relevance_score >= 50 ? 'text-green-400' : 'text-red-400'}`}>{analysis.relevance_score}/100</p>
+                         </div>
+                         <div className="flex-1 bg-[#111] p-3 rounded-xl border border-white/5 text-center">
+                            <p className="text-[9px] text-gray-500 uppercase tracking-widest mb-1">Risk Score</p>
+                            <p className={`font-mono text-lg ${analysis.risk_score > 70 ? 'text-red-400' : 'text-amber-400'}`}>{analysis.risk_score}/100</p>
+                         </div>
+                      </div>
+
+                      {/* SINYAL UTAMA */}
+                      <div className={`p-6 rounded-xl border flex flex-col items-center justify-center text-center ${
+                        analysis.direction === 'buy' ? 'bg-green-500/5 border-green-500/20' : 
+                        analysis.direction === 'sell' ? 'bg-red-500/5 border-red-500/20' : 
                         'bg-gray-800/30 border-white/5'
                       }`}>
-                        <p className="text-[10px] text-gray-500 tracking-widest mb-2 uppercase">{analysis.pair} - {analysis.current_price}</p>
+                        <p className="text-[10px] text-gray-400 mb-1 font-mono tracking-widest uppercase">{analysis.pair} - {analysis.timeframe}</p>
                         <p className={`font-serif text-4xl tracking-[0.2em] uppercase ${
                           analysis.direction === 'buy' ? 'text-green-400' : 
                           analysis.direction === 'sell' ? 'text-red-400' : 'text-gray-300'
                         }`}>{analysis.direction}</p>
                       </div>
+
+                      {/* LEVEL TRADING (Hanya muncul jika bukan NO_TRADE) */}
+                      {analysis.direction !== 'no_trade' && (
+                        <div className="grid grid-cols-3 gap-2 text-center bg-[#111] p-3 rounded-xl border border-white/5">
+                          <div>
+                            <p className="text-[9px] text-gray-500 uppercase tracking-widest mb-1">Entry</p>
+                            <p className="font-mono text-xs text-white">{analysis.entry_zone}</p>
+                          </div>
+                          <div>
+                            <p className="text-[9px] text-gray-500 uppercase tracking-widest mb-1">Stop Loss</p>
+                            <p className="font-mono text-xs text-red-400">{analysis.stop_loss}</p>
+                          </div>
+                          <div>
+                            <p className="text-[9px] text-gray-500 uppercase tracking-widest mb-1">Take Profit</p>
+                            <p className="font-mono text-xs text-green-400">{analysis.take_profit}</p>
+                          </div>
+                        </div>
+                      )}
                       
+                      {/* RATIONALE */}
                       <div>
-                        <h3 className="text-[10px] text-[#D4AF37] uppercase tracking-[0.2em] mb-3">Fundamental Logic</h3>
-                        <p className="text-sm text-gray-400 leading-relaxed font-light">{analysis.fundamental_reason}</p>
+                        <h3 className="text-[10px] text-[#D4AF37] uppercase tracking-[0.2em] mb-2">Structured Rationale</h3>
+                        {analysis.direction === 'no_trade' ? (
+                          <p className="text-sm text-gray-400 italic">"{analysis.no_trade_reason}"</p>
+                        ) : (
+                          <ul className="text-xs text-gray-400 space-y-2 list-disc list-inside">
+                            <li><strong className="text-gray-200">Surprise:</strong> {analysis.rationale?.surprise}</li>
+                            <li><strong className="text-gray-200">Historical:</strong> {analysis.rationale?.historical}</li>
+                            <li><strong className="text-gray-200">Sentiment:</strong> {analysis.rationale?.sentiment}</li>
+                          </ul>
+                        )}
                       </div>
+
+                      {/* INVALIDATION */}
+                      {analysis.direction !== 'no_trade' && analysis.invalidation && (
+                        <div className="bg-red-500/5 border border-red-500/10 p-3 rounded-lg">
+                           <p className="text-[9px] text-red-400 uppercase tracking-widest mb-1">Invalidation Condition</p>
+                           <p className="text-xs text-gray-300">{analysis.invalidation}</p>
+                        </div>
+                      )}
                       
-                      <div className="pt-8 border-t border-white/5">
-                        <p className="text-[10px] text-gray-500 uppercase tracking-[0.2em] mb-4 text-center">Record Execution</p>
-                        <div className="flex gap-4">
-                          <button onClick={() => saveTradeToJournal('win')} disabled={isSavingTrade} className="flex-1 border border-green-500/20 text-green-400 hover:bg-green-500 hover:text-black py-3 rounded-xl text-xs font-bold tracking-widest transition-all">WIN</button>
-                          <button onClick={() => saveTradeToJournal('loss')} disabled={isSavingTrade} className="flex-1 border border-red-500/20 text-red-400 hover:bg-red-500 hover:text-black py-3 rounded-xl text-xs font-bold tracking-widest transition-all">LOSS</button>
+                      {/* ACTION BUTTONS */}
+                      <div className="pt-4 border-t border-white/5">
+                        <div className="flex gap-3">
+                          <button onClick={() => saveTradeToJournal('win')} disabled={isSavingTrade} className="flex-1 border border-green-500/20 text-green-400 hover:bg-green-500 hover:text-black py-2.5 rounded-lg text-xs font-bold tracking-widest transition-all">WIN</button>
+                          <button onClick={() => saveTradeToJournal('loss')} disabled={isSavingTrade} className="flex-1 border border-red-500/20 text-red-400 hover:bg-red-500 hover:text-black py-2.5 rounded-lg text-xs font-bold tracking-widest transition-all">LOSS</button>
                         </div>
                       </div>
                     </div>
                   ) : (
-                    <div className="text-center py-24 opacity-20">
-                      <p className="text-sm font-serif italic text-gray-400 tracking-wider">Select an event to<br/>generate intelligence.</p>
+                    <div className="text-center py-20 opacity-30">
+                      <p className="text-sm font-serif italic text-gray-400 tracking-wider">Select an event to<br/>generate signal.</p>
                     </div>
                   )}
                 </div>
@@ -392,80 +437,76 @@ export default function Dashboard() {
 
         {/* TAB 2: ARSIP DATA */}
         {activeTab === 'history' && (
-          <div className="animate-in fade-in duration-700">
-            <div className="bg-[#0a0a0a] border border-white/5 rounded-3xl overflow-hidden shadow-2xl">
-              <div className="p-8 border-b border-white/5">
-                <h2 className="text-lg font-serif text-white tracking-widest uppercase">Historical Archive</h2>
-              </div>
-              <div className="overflow-x-auto">
-                <table className="w-full text-left text-sm whitespace-nowrap">
-                  <thead className="bg-[#050505] text-gray-500 text-[10px] uppercase tracking-[0.2em]">
-                    <tr>
-                      <th className="px-8 py-5 font-normal">Date</th>
-                      <th className="px-8 py-5 font-normal">Currency</th>
-                      <th className="px-8 py-5 font-normal">Event</th>
-                      <th className="px-8 py-5 font-normal text-center">Actual</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-white/5">
-                    {pastEvents.map((ev, i) => (
-                      <tr key={i} className="hover:bg-white/[0.02] transition-colors">
-                        <td className="px-8 py-5 text-gray-500 font-mono text-xs">{formatDateWIB(ev.date)} - {formatTimeWIB(ev.date)}</td>
-                        <td className="px-8 py-5 font-bold text-gray-400 text-xs tracking-wider">{ev.country}</td>
-                        <td className="px-8 py-5 text-gray-300 text-sm">{ev.title}</td>
-                        <td className="px-8 py-5 text-center font-bold font-mono text-[#D4AF37] text-sm">{ev.actual || 'Pending'}</td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            </div>
-          </div>
+           <div className="bg-[#0a0a0a] border border-white/5 rounded-2xl overflow-hidden shadow-2xl animate-in fade-in duration-500">
+             <div className="p-6 border-b border-white/5"><h2 className="text-base font-serif text-white tracking-widest uppercase">Historical Archive</h2></div>
+             <div className="overflow-x-auto">
+               <table className="w-full text-left text-sm whitespace-nowrap">
+                 <thead className="bg-[#050505] text-gray-500 text-[10px] uppercase tracking-[0.2em]">
+                   <tr>
+                     <th className="px-6 py-4 font-normal">Date</th>
+                     <th className="px-6 py-4 font-normal">Currency</th>
+                     <th className="px-6 py-4 font-normal">Event</th>
+                     <th className="px-6 py-4 font-normal text-center">Actual</th>
+                   </tr>
+                 </thead>
+                 <tbody className="divide-y divide-white/5">
+                   {pastEvents.map((ev, i) => (
+                     <tr key={i} className="hover:bg-white/[0.02]">
+                       <td className="px-6 py-4 text-gray-500 font-mono text-xs">{formatDateWIB(ev.date)} - {formatTimeWIB(ev.date)}</td>
+                       <td className="px-6 py-4 font-bold text-gray-400 text-xs">{ev.country}</td>
+                       <td className="px-6 py-4 text-gray-300 text-sm">{ev.title}</td>
+                       <td className="px-6 py-4 text-center font-bold font-mono text-[#D4AF37] text-sm">{ev.actual || 'Pending'}</td>
+                     </tr>
+                   ))}
+                 </tbody>
+               </table>
+             </div>
+           </div>
         )}
 
         {/* TAB 3: JURNAL & PERFORMA */}
         {activeTab === 'performance' && (
-          <div className="space-y-10 animate-in fade-in duration-700">
-            <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
+          <div className="space-y-6 animate-in fade-in duration-500">
+            <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
               {[
                 { label: 'Total Trades', val: totalTrades, color: 'text-white' },
                 { label: 'Win Rate', val: `${winRate}%`, color: Number(winRate) >= 50 ? 'text-[#D4AF37]' : 'text-red-400' },
                 { label: 'Net Pips', val: `${totalPips > 0 ? '+' : ''}${totalPips}`, color: totalPips >= 0 ? 'text-[#D4AF37]' : 'text-red-400' },
                 { label: 'W / L', val: `${wins} / ${losses}`, color: 'text-white' },
               ].map((stat, idx) => (
-                <div key={idx} className="bg-[#0a0a0a] p-8 rounded-3xl border border-white/5 shadow-2xl">
-                  <p className="text-[10px] text-gray-500 uppercase tracking-[0.2em] mb-3">{stat.label}</p>
+                <div key={idx} className="bg-[#0a0a0a] p-6 rounded-2xl border border-white/5 shadow-xl">
+                  <p className="text-[10px] text-gray-500 uppercase tracking-widest mb-2">{stat.label}</p>
                   <p className={`text-3xl font-serif tracking-wider ${stat.color}`}>{stat.val}</p>
                 </div>
               ))}
             </div>
 
-            <div className="bg-[#0a0a0a] border border-white/5 rounded-3xl overflow-hidden shadow-2xl">
-              <div className="p-8 border-b border-white/5 flex justify-between items-center">
-                <h2 className="text-lg font-serif text-white tracking-widest uppercase">Execution Ledger</h2>
-                <input type="month" value={filterMonth} onChange={(e) => setFilterMonth(e.target.value)} className="bg-[#050505] text-gray-300 text-xs px-5 py-3 rounded-xl border border-white/5 outline-none focus:border-[#D4AF37]/50 tracking-wider" />
+            <div className="bg-[#0a0a0a] border border-white/5 rounded-2xl overflow-hidden shadow-2xl">
+              <div className="p-6 border-b border-white/5 flex justify-between items-center">
+                <h2 className="text-base font-serif text-white tracking-widest uppercase">Execution Ledger</h2>
+                <input type="month" value={filterMonth} onChange={(e) => setFilterMonth(e.target.value)} className="bg-[#050505] text-gray-300 text-xs px-4 py-2 rounded-xl border border-white/5 outline-none focus:border-[#D4AF37]/50" />
               </div>
               <div className="overflow-x-auto">
                 <table className="w-full text-left text-sm whitespace-nowrap">
                   <thead className="bg-[#050505] text-gray-500 text-[10px] uppercase tracking-[0.2em]">
                     <tr>
-                      <th className="px-8 py-5 font-normal">Date</th>
-                      <th className="px-8 py-5 font-normal">Pair</th>
-                      <th className="px-8 py-5 font-normal">Direction</th>
-                      <th className="px-8 py-5 font-normal">Result</th>
-                      <th className="px-8 py-5 font-normal text-right">Pips</th>
+                      <th className="px-6 py-4 font-normal">Date</th>
+                      <th className="px-6 py-4 font-normal">Pair</th>
+                      <th className="px-6 py-4 font-normal">Direction</th>
+                      <th className="px-6 py-4 font-normal">Result</th>
+                      <th className="px-6 py-4 font-normal text-right">Pips</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-white/5">
                     {filteredJournal.map((trade, i) => (
-                      <tr key={i} className="hover:bg-white/[0.02] transition-colors">
-                        <td className="px-8 py-5 text-gray-500 font-mono text-xs">{new Date(trade.closed_at).toLocaleDateString('id-ID')}</td>
-                        <td className="px-8 py-5 font-bold text-white text-sm tracking-wider">{trade.pair}</td>
-                        <td className="px-8 py-5 text-gray-400 text-xs tracking-wider">{trade.direction.toUpperCase()}</td>
-                        <td className="px-8 py-5">
-                          <span className={`px-4 py-1.5 rounded-full text-[10px] tracking-widest font-bold ${trade.result === 'win' ? 'bg-[#D4AF37]/10 text-[#D4AF37] border border-[#D4AF37]/20' : 'bg-red-500/10 text-red-400 border border-red-500/20'}`}>{trade.result.toUpperCase()}</span>
+                      <tr key={i} className="hover:bg-white/[0.02]">
+                        <td className="px-6 py-4 text-gray-500 font-mono text-xs">{new Date(trade.closed_at).toLocaleDateString('id-ID')}</td>
+                        <td className="px-6 py-4 font-bold text-white text-sm">{trade.pair}</td>
+                        <td className="px-6 py-4 text-gray-400 text-xs">{trade.direction.toUpperCase()}</td>
+                        <td className="px-6 py-4">
+                          <span className={`px-3 py-1 rounded-full text-[10px] tracking-widest font-bold ${trade.result === 'win' ? 'bg-[#D4AF37]/10 text-[#D4AF37]' : 'bg-red-500/10 text-red-400'}`}>{trade.result.toUpperCase()}</span>
                         </td>
-                        <td className={`px-8 py-5 text-right font-mono text-sm tracking-wider ${trade.pips > 0 ? 'text-[#D4AF37]' : 'text-red-400'}`}>{trade.pips > 0 ? '+' : ''}{trade.pips}</td>
+                        <td className={`px-6 py-4 text-right font-mono text-sm ${trade.pips > 0 ? 'text-[#D4AF37]' : 'text-red-400'}`}>{trade.pips > 0 ? '+' : ''}{trade.pips}</td>
                       </tr>
                     ))}
                   </tbody>
@@ -477,40 +518,38 @@ export default function Dashboard() {
 
         {/* TAB 4: KALKULATOR */}
         {activeTab === 'calculator' && (
-          <div className="max-w-3xl mx-auto animate-in fade-in duration-700">
-            <div className="bg-[#0a0a0a] border border-white/5 rounded-3xl shadow-2xl overflow-hidden">
-              <div className="p-8 border-b border-white/5 bg-gradient-to-b from-[#D4AF37]/5 to-transparent">
-                <h2 className="text-lg font-serif text-white tracking-widest uppercase">Risk Management</h2>
-                <p className="text-[10px] text-gray-500 tracking-wider mt-1">Position Sizing Calculator</p>
+          <div className="max-w-3xl mx-auto animate-in fade-in duration-500">
+            <div className="bg-[#0a0a0a] border border-white/5 rounded-2xl shadow-2xl overflow-hidden">
+              <div className="p-6 border-b border-white/5 bg-gradient-to-r from-[#D4AF37]/10 to-transparent">
+                <h2 className="text-base font-serif text-white tracking-widest uppercase">Risk Management</h2>
               </div>
-              <div className="p-10 grid grid-cols-1 md:grid-cols-2 gap-12">
-                <div className="space-y-8">
+              <div className="p-8 grid grid-cols-1 md:grid-cols-2 gap-8">
+                <div className="space-y-5">
                   <div>
-                    <label className="block text-[10px] text-gray-500 uppercase tracking-[0.2em] mb-3">Account Balance (USD)</label>
-                    <input type="number" value={calcBalance} onChange={(e) => setCalcBalance(Number(e.target.value))} className="w-full bg-[#050505] p-4 rounded-xl border border-white/5 text-white font-mono text-xl outline-none focus:border-[#D4AF37]/50 tracking-wider" />
+                    <label className="block text-[10px] text-gray-500 uppercase tracking-widest mb-2">Account Balance (USD)</label>
+                    <input type="number" value={calcBalance} onChange={(e) => setCalcBalance(Number(e.target.value))} className="w-full bg-[#050505] p-4 rounded-xl border border-white/5 text-white font-mono text-lg outline-none focus:border-[#D4AF37]/50" />
                   </div>
-                  <div className="grid grid-cols-2 gap-6">
+                  <div className="grid grid-cols-2 gap-4">
                     <div>
-                      <label className="block text-[10px] text-gray-500 uppercase tracking-[0.2em] mb-3">Risk %</label>
-                      <input type="number" value={calcRisk} onChange={(e) => setCalcRisk(Number(e.target.value))} className="w-full bg-[#050505] p-4 rounded-xl border border-white/5 text-white font-mono text-xl outline-none focus:border-[#D4AF37]/50 tracking-wider" />
+                      <label className="block text-[10px] text-gray-500 uppercase tracking-widest mb-2">Risk %</label>
+                      <input type="number" value={calcRisk} onChange={(e) => setCalcRisk(Number(e.target.value))} className="w-full bg-[#050505] p-4 rounded-xl border border-white/5 text-white font-mono text-lg outline-none focus:border-[#D4AF37]/50" />
                     </div>
                     <div>
-                      <label className="block text-[10px] text-gray-500 uppercase tracking-[0.2em] mb-3">Stop Loss (Pips)</label>
-                      <input type="number" value={calcSl} onChange={(e) => setCalcSl(Number(e.target.value))} className="w-full bg-[#050505] p-4 rounded-xl border border-white/5 text-white font-mono text-xl outline-none focus:border-[#D4AF37]/50 tracking-wider" />
+                      <label className="block text-[10px] text-gray-500 uppercase tracking-widest mb-2">Stop Loss (Pips)</label>
+                      <input type="number" value={calcSl} onChange={(e) => setCalcSl(Number(e.target.value))} className="w-full bg-[#050505] p-4 rounded-xl border border-white/5 text-white font-mono text-lg outline-none focus:border-[#D4AF37]/50" />
                     </div>
                   </div>
-                  <p className="text-[10px] text-gray-600 italic tracking-wider">*Asumsi: 1 Standard Lot = $10 / pip.</p>
                 </div>
 
-                <div className="bg-[#050505] rounded-2xl p-8 border border-white/5 flex flex-col justify-center space-y-8">
+                <div className="bg-[#050505] rounded-xl p-6 border border-white/5 flex flex-col justify-center space-y-4">
                   <div className="text-center">
-                    <p className="text-[10px] text-gray-500 uppercase tracking-[0.2em] mb-2">Risk Amount</p>
-                    <p className="text-3xl font-mono text-red-400 tracking-wider">${riskAmountUSD.toFixed(2)}</p>
+                    <p className="text-[10px] text-gray-500 uppercase tracking-widest mb-1">Risk Amount</p>
+                    <p className="text-2xl font-mono text-red-400">${riskAmountUSD.toFixed(2)}</p>
                   </div>
                   <div className="h-px w-full bg-white/5"></div>
                   <div className="text-center">
-                    <p className="text-[10px] text-[#D4AF37] uppercase tracking-[0.2em] mb-2">Standard Lots</p>
-                    <p className="text-5xl font-mono text-[#D4AF37] tracking-widest">{lotSizeStandard.toFixed(2)}</p>
+                    <p className="text-[10px] text-[#D4AF37] uppercase tracking-widest mb-1">Standard Lots</p>
+                    <p className="text-4xl font-mono text-[#D4AF37] tracking-widest">{lotSizeStandard.toFixed(2)}</p>
                   </div>
                 </div>
               </div>
@@ -522,25 +561,24 @@ export default function Dashboard() {
 
       {/* MODAL ANALISIS */}
       {selectedEvent && !analysis && (
-        <div className="fixed inset-0 bg-black/90 backdrop-blur-xl flex items-center justify-center p-4 z-50 animate-in fade-in duration-500">
-          <div className="bg-[#0a0a0a] p-10 rounded-3xl w-full max-w-md border border-white/10 shadow-[0_0_100px_rgba(212,175,55,0.05)] animate-in zoom-in-95">
-            <div className="mb-10 text-center">
-              <h3 className="text-xl font-serif text-white tracking-widest uppercase mb-2">Initiate Analysis</h3>
-              <p className="text-xs text-gray-500 tracking-wider">{selectedEvent.title} <span className="text-[#D4AF37]">({selectedEvent.country})</span></p>
+        <div className="fixed inset-0 bg-black/90 backdrop-blur-xl flex items-center justify-center p-4 z-50 animate-in fade-in duration-300">
+          <div className="bg-[#0a0a0a] p-8 rounded-2xl w-full max-w-sm border border-white/10 shadow-[0_0_50px_rgba(212,175,55,0.1)] animate-in zoom-in-95">
+            <div className="mb-6 text-center">
+              <h3 className="text-lg font-serif text-white tracking-widest uppercase mb-1">Initiate Analysis</h3>
+              <p className="text-[10px] text-gray-500 tracking-wider">{selectedEvent.title}</p>
             </div>
             
-            <form onSubmit={handleAnalyze} className="space-y-8">
+            <form onSubmit={handleAnalyze} className="space-y-5">
               <div>
-                <label className="block text-[10px] text-gray-500 uppercase tracking-[0.2em] mb-3 text-center">Select Target Asset</label>
-                <select name="pair" className="w-full bg-[#050505] p-4 rounded-xl border border-white/5 text-white text-center font-mono tracking-widest outline-none focus:border-[#D4AF37]/50">
+                <select name="pair" className="w-full bg-[#050505] p-3 rounded-xl border border-white/5 text-white text-center font-mono tracking-widest outline-none focus:border-[#D4AF37]/50 text-sm">
                   <option value="EUR/USD">EUR/USD</option>
-                  <option value="XAU/USD">XAU/USD</option>
+                  <option value="XAU/USD">XAU/USD (Gold)</option>
                   <option value="USD/JPY">USD/JPY</option>
                 </select>
               </div>
-              <div className="flex gap-4 pt-4">
-                <button type="button" onClick={() => setSelectedEvent(null)} className="flex-1 px-4 py-4 rounded-xl text-gray-500 hover:text-white text-xs font-bold tracking-widest transition-colors">CANCEL</button>
-                <button type="submit" disabled={isAnalyzing} className="flex-[2] bg-[#D4AF37] hover:bg-[#c4a030] text-black px-4 py-4 rounded-xl text-xs font-bold tracking-widest transition-all disabled:opacity-50">
+              <div className="flex gap-3">
+                <button type="button" onClick={() => setSelectedEvent(null)} className="flex-1 px-4 py-3 rounded-xl text-gray-500 hover:text-white text-xs font-bold tracking-widest transition-colors">CANCEL</button>
+                <button type="submit" disabled={isAnalyzing} className="flex-[2] bg-[#D4AF37] hover:bg-[#c4a030] text-black px-4 py-3 rounded-xl text-xs font-bold tracking-widest transition-all disabled:opacity-50">
                   {isAnalyzing ? 'PROCESSING...' : 'GENERATE'}
                 </button>
               </div>
