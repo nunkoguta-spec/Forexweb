@@ -553,7 +553,7 @@ export default function Dashboard() {
 
   if (!session) {
     return (
-      <div className="min-h-screen bg-[#09090B] flex items-center justify-center p-4 font-sans text-white overflow-hidden relative">
+      <div className="min-h-screen bg-[#09090B] flex items-center justify-center p-4 font-sans text-white relative">
         <div className="absolute top-0 left-1/4 w-[500px] h-[500px] bg-[#FF6600] opacity-10 rounded-full blur-[120px] pointer-events-none"></div>
         <div className="relative z-10 w-full max-w-sm">
           <div className="text-center mb-10">

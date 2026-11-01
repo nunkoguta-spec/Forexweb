@@ -1,22 +1,70 @@
 @import "tailwindcss";
 
-body {
-  background-color: #09090b;
-  color: #e2e8f0;
+/* ============================================
+   iOS PWA CRITICAL FIXES
+   ============================================ */
+
+html {
+  -webkit-text-size-adjust: 100%;
+  -webkit-tap-highlight-color: transparent;
+  touch-action: manipulation;
 }
 
-/* Custom Scrollbar untuk tampilan terminal */
-.custom-scrollbar::-webkit-scrollbar {
-  width: 6px;
-  height: 6px;
+body {
+  -webkit-overflow-scrolling: touch;
+  overscroll-behavior-y: none;
+  min-height: 100vh;
+  min-height: 100dvh; /* Fix iOS viewport bug */
+  -webkit-user-select: text;
+  user-select: text;
 }
-.custom-scrollbar::-webkit-scrollbar-track {
-  background: transparent;
+
+/* FORCE all input elements focusable on iOS PWA */
+input,
+textarea,
+select {
+  -webkit-appearance: none;
+  appearance: none;
+  -webkit-user-select: text !important;
+  user-select: text !important;
+  -webkit-touch-callout: default;
+  pointer-events: auto !important;
+  touch-action: manipulation !important;
+  font-size: 16px !important; /* Prevent iOS auto-zoom + enable focus */
+  line-height: 1.5 !important;
+  min-height: 44px; /* Apple HIG minimum tap target */
 }
-.custom-scrollbar::-webkit-scrollbar-thumb {
-  background: #3f3f46;
-  border-radius: 10px;
+
+/* Allow text selection globally (some iOS PWA bug blocks this) */
+p, h1, h2, h3, h4, h5, h6, span, div, label {
+  -webkit-user-select: text;
+  user-select: text;
 }
-.custom-scrollbar::-webkit-scrollbar-thumb:hover {
-  background: #52525b;
+
+/* Buttons must respond to tap */
+button, a, label, [role="button"] {
+  -webkit-tap-highlight-color: rgba(255, 102, 0, 0.2);
+  touch-action: manipulation;
+  cursor: pointer;
+}
+
+/* iOS safe area support (notch, home indicator) */
+.pb-safe {
+  padding-bottom: env(safe-area-inset-bottom, 0px);
+}
+
+.pt-safe {
+  padding-top: env(safe-area-inset-top, 0px);
+}
+
+/* Custom scrollbar */
+.custom-scrollbar::-webkit-scrollbar { width: 6px; height: 6px; }
+.custom-scrollbar::-webkit-scrollbar-track { background: transparent; }
+.custom-scrollbar::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.1); border-radius: 3px; }
+.custom-scrollbar::-webkit-scrollbar-thumb:hover { background: rgba(255,255,255,0.2); }
+
+/* Prevent iOS bounce scroll on fixed modals */
+.ios-scroll-fix {
+  -webkit-overflow-scrolling: touch;
+  overscroll-behavior: contain;
 }
