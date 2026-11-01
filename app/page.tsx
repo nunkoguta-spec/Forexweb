@@ -7,8 +7,164 @@ const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || '';
 const supabaseKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || '';
 const supabase = createClient(supabaseUrl, supabaseKey);
 
+/* ============================================================
+   HELPER: FORMAT COUNTDOWN
+   ============================================================ */
+function formatCountdown(diffMs: number): string {
+  if (diffMs <= 0) return '00:00:00';
+  const h = Math.floor(diffMs / 3600000);
+  const m = Math.floor((diffMs % 3600000) / 60000);
+  const s = Math.floor((diffMs % 60000) / 1000);
+  return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`;
+}
+
+/* ============================================================
+   ISOLATED COMPONENT: LIVE CLOCK
+   Only this component re-renders every second
+   ============================================================ */
+function LiveClock({ className = '' }: { className?: string }) {
+  const [time, setTime] = useState('');
+  
+  useEffect(() => {
+    function tick() {
+      setTime(new Date().toLocaleTimeString('id-ID', { 
+        timeZone: 'Asia/Jakarta', hour12: false,
+        hour: '2-digit', minute: '2-digit', second: '2-digit'
+      }));
+    }
+    tick();
+    const timer = setInterval(tick, 1000);
+    const onVis = () => { if (document.visibilityState === 'visible') tick(); };
+    document.addEventListener('visibilitychange', onVis);
+    return () => { clearInterval(timer); document.removeEventListener('visibilitychange', onVis); };
+  }, []);
+  
+  return <span className={className}>{time || '--:--:--'}</span>;
+}
+
+/* ============================================================
+   ISOLATED COMPONENT: COUNTDOWN TIMER
+   Only this component re-renders every second
+   ============================================================ */
+function CountdownTimer({ targetDate, className = '' }: { targetDate: string | null; className?: string }) {
+  const [display, setDisplay] = useState('00:00:00');
+  
+  useEffect(() => {
+    if (!targetDate) { setDisplay('—'); return; }
+    const target = new Date(targetDate).getTime();
+    if (isNaN(target)) { setDisplay('—'); return; }
+    
+    function tick() {
+      setDisplay(formatCountdown(target - Date.now()));
+    }
+    tick();
+    const timer = setInterval(tick, 1000);
+    const onVis = () => { if (document.visibilityState === 'visible') tick(); };
+    document.addEventListener('visibilitychange', onVis);
+    return () => { clearInterval(timer); document.removeEventListener('visibilitychange', onVis); };
+  }, [targetDate]);
+  
+  return <span className={`font-mono tabular-nums ${className}`}>{display}</span>;
+}
+
+/* ============================================================
+   ISOLATED COMPONENT: MARKET SESSIONS TRACKER
+   Works on both desktop and mobile
+   ============================================================ */
+const SESSION_DATA = [
+  { key: 'SYD', name: 'Sydney', openUTC: 21, closeUTC: 6 },
+  { key: 'TYO', name: 'Tokyo', openUTC: 0, closeUTC: 9 },
+  { key: 'LDN', name: 'London', openUTC: 7, closeUTC: 16 },
+  { key: 'NYC', name: 'New York', openUTC: 12, closeUTC: 21 },
+];
+
+function SessionsTracker({ variant = 'default' }: { variant?: 'default' | 'compact' }) {
+  const [sessions, setSessions] = useState<{ key: string; name: string; isOpen: boolean; timeInfo: string }[]>([]);
+  
+  useEffect(() => {
+    function calc() {
+      const now = new Date();
+      const utcH = now.getUTCHours() + now.getUTCMinutes() / 60;
+      
+      const result = SESSION_DATA.map(s => {
+        let isOpen: boolean;
+        let closeDiff: number;
+        
+        if (s.openUTC < s.closeUTC) {
+          isOpen = utcH >= s.openUTC && utcH < s.closeUTC;
+          closeDiff = isOpen ? s.closeUTC - utcH : (s.openUTC > utcH ? s.openUTC - utcH : 24 - utcH + s.openUTC);
+        } else {
+          isOpen = utcH >= s.openUTC || utcH < s.closeUTC;
+          if (isOpen) {
+            closeDiff = utcH < s.closeUTC ? s.closeUTC - utcH : 24 - utcH + s.closeUTC;
+          } else {
+            closeDiff = s.openUTC - utcH;
+          }
+        }
+        
+        const h = Math.floor(closeDiff);
+        const m = Math.floor((closeDiff - h) * 60);
+        const timeInfo = isOpen ? `${h}h ${m}m left` : `in ${h}h ${m}m`;
+        
+        return { key: s.key, name: s.name, isOpen, timeInfo };
+      });
+      setSessions(result);
+    }
+    calc();
+    const timer = setInterval(calc, 1000);
+    const onVis = () => { if (document.visibilityState === 'visible') calc(); };
+    document.addEventListener('visibilitychange', onVis);
+    return () => { clearInterval(timer); document.removeEventListener('visibilitychange', onVis); };
+  }, []);
+  
+  if (variant === 'compact') {
+    return (
+      <div className="flex items-center gap-2 overflow-x-auto custom-scrollbar">
+        {sessions.map((s) => (
+          <div 
+            key={s.key} 
+            className={`flex items-center gap-1.5 px-2 py-1 rounded-md border shrink-0 ${
+              s.isOpen 
+                ? 'bg-green-500/10 border-green-500/30' 
+                : 'bg-white/[0.02] border-white/5'
+            }`}
+          >
+            <span className={`w-1.5 h-1.5 rounded-full ${s.isOpen ? 'bg-green-400 shadow-[0_0_6px_rgba(34,197,94,0.8)]' : 'bg-gray-600'}`}></span>
+            <span className={`text-[9px] font-bold tracking-wider ${s.isOpen ? 'text-green-400' : 'text-gray-500'}`}>{s.key}</span>
+          </div>
+        ))}
+      </div>
+    );
+  }
+  
+  return (
+    <div className="flex flex-wrap items-center gap-2">
+      {sessions.map((s) => (
+        <div 
+          key={s.key} 
+          className={`flex items-center gap-2 px-3 py-1.5 rounded-lg border transition-all ${
+            s.isOpen 
+              ? 'bg-green-500/10 border-green-500/30' 
+              : 'bg-white/[0.02] border-white/5'
+          }`}
+        >
+          <span className={`w-1.5 h-1.5 rounded-full ${s.isOpen ? 'bg-green-400 shadow-[0_0_6px_rgba(34,197,94,0.8)] animate-pulse' : 'bg-gray-600'}`}></span>
+          <span className={`text-[10px] font-bold tracking-wider ${s.isOpen ? 'text-green-400' : 'text-gray-500'}`}>
+            {s.name.toUpperCase()}
+          </span>
+          <span className={`text-[9px] tabular-nums ${s.isOpen ? 'text-green-400/70' : 'text-gray-600'}`}>
+            {s.timeInfo}
+          </span>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+/* ============================================================
+   MAIN DASHBOARD
+   ============================================================ */
 export default function Dashboard() {
-  // --- STATE AUTHENTICATION ---
   const [session, setSession] = useState<any>(null);
   const [isAuthLoading, setIsAuthLoading] = useState(true);
   const [authEmail, setAuthEmail] = useState('');
@@ -17,13 +173,14 @@ export default function Dashboard() {
   const [authMessage, setAuthMessage] = useState<{ type: 'error' | 'success', text: string } | null>(null);
   const [isAuthProcessing, setIsAuthProcessing] = useState(false);
 
-  // --- STATE APLIKASI ---
   const [activeTab, setActiveTab] = useState<'calendar' | 'daily' | 'history' | 'performance' | 'calculator'>('calendar');
   const [marketData, setMarketData] = useState<any>(null);
   const [events, setEvents] = useState<any[]>([]);
   const [journal, setJournal] = useState<any[]>([]);
   const [dailySignals, setDailySignals] = useState<any[]>([]);
   const [isGeneratingDaily, setIsGeneratingDaily] = useState(false);
+  
+  const [chartInterval, setChartInterval] = useState('15'); 
   
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [selectedEvent, setSelectedEvent] = useState<any>(null);
@@ -33,7 +190,6 @@ export default function Dashboard() {
   const [isSavingTrade, setIsSavingTrade] = useState(false);
   const [filterMonth, setFilterMonth] = useState('');
   const [focusMode, setFocusMode] = useState(false);
-  const [currentTime, setCurrentTime] = useState('');
   const [dateFilter, setDateFilter] = useState<'yesterday' | 'today' | 'tomorrow'>('today');
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [isRefreshing, setIsRefreshing] = useState(false);
@@ -43,7 +199,6 @@ export default function Dashboard() {
   const [calcSl, setCalcSl] = useState<number | ''>(20);
 
   const [nextHighImpact, setNextHighImpact] = useState<any>(null);
-  const [countdown, setCountdown] = useState<string>('');
   const chartContainerRef = useRef<HTMLDivElement>(null);
 
   const [notifPermission, setNotifPermission] = useState<string>('default');
@@ -71,16 +226,19 @@ export default function Dashboard() {
     }
   }
 
+  // Notification checker (uses setInterval but lightweight)
   useEffect(() => {
     if (notifPermission !== 'granted' || !nextHighImpact) return;
-    const eventTime = new Date(nextHighImpact.date).getTime();
-    const now = new Date().getTime();
-    const diffMinutes = (eventTime - now) / 60000;
-    if (diffMinutes > 0 && diffMinutes <= 15 && !notifiedEvents.includes(nextHighImpact.title)) {
-      new Notification("High Impact Alert", { body: `${nextHighImpact.title} in ${Math.ceil(diffMinutes)} min`, icon: '/logo.png' });
-      setNotifiedEvents(prev => [...prev, nextHighImpact.title]);
-    }
-  }, [currentTime, nextHighImpact, notifPermission, notifiedEvents]);
+    const timer = setInterval(() => {
+      const eventTime = new Date(nextHighImpact.date).getTime();
+      const diffMinutes = (eventTime - Date.now()) / 60000;
+      if (diffMinutes > 0 && diffMinutes <= 15 && !notifiedEvents.includes(nextHighImpact.title)) {
+        new Notification("High Impact Alert", { body: `${nextHighImpact.title} in ${Math.ceil(diffMinutes)} min`, icon: '/logo.png' });
+        setNotifiedEvents(prev => [...prev, nextHighImpact.title]);
+      }
+    }, 30000); // check every 30s
+    return () => clearInterval(timer);
+  }, [nextHighImpact, notifPermission, notifiedEvents]);
 
   useEffect(() => {
     if (!marketData || dailySignals.length === 0) return;
@@ -142,28 +300,16 @@ export default function Dashboard() {
     setTimeout(() => setIsRefreshing(false), 800);
   }
 
+  // Main data effect — NO clock/countdown here to avoid re-renders
   useEffect(() => {
     if (!session) return;
     setFilterMonth(new Date().toISOString().slice(0, 7));
-    const timer = setInterval(() => {
-      setCurrentTime(new Date().toLocaleTimeString('id-ID', { timeZone: 'Asia/Jakarta', hour12: false }));
-      if (nextHighImpact) {
-        const now = new Date().getTime();
-        const eventTime = new Date(nextHighImpact.date).getTime();
-        const diff = eventTime - now;
-        if (diff > 0) {
-          const h = Math.floor((diff % (1000 * 60 * 60 * 24)) / (1000 * 60 * 60));
-          const m = Math.floor((diff % (1000 * 60 * 60)) / (1000 * 60));
-          const s = Math.floor((diff % (1000 * 60)) / 1000);
-          setCountdown(`${h.toString().padStart(2, '0')}:${m.toString().padStart(2, '0')}:${s.toString().padStart(2, '0')}`);
-        } else setCountdown('00:00:00');
-      }
-    }, 1000);
+    
     const syncData = async () => { try { await fetch('/api/sync'); fetchMarketData(); } catch (err) {} };
     fetchNews(); fetchMarketData(); fetchJournal(); fetchDailySignals(); syncData();
     const interval = setInterval(() => { fetchNews(); syncData(); }, 60000); 
-    return () => { clearInterval(interval); clearInterval(timer); };
-  }, [nextHighImpact, session]);
+    return () => { clearInterval(interval); };
+  }, [session]);
 
   useEffect(() => {
     if (activeTab === 'calendar' && typeof window !== 'undefined' && chartContainerRef.current) {
@@ -173,7 +319,10 @@ export default function Dashboard() {
       script.async = true;
       script.onload = () => {
         new (window as any).TradingView.widget({
-          autosize: true, symbol: "OANDA:XAUUSD", interval: "15", timezone: "Asia/Jakarta",
+          autosize: true, 
+          symbol: "OANDA:XAUUSD", 
+          interval: chartInterval,
+          timezone: "Asia/Jakarta",
           theme: "dark", style: "1", locale: "id", toolbar_bg: "#09090B",
           enable_publishing: false, hide_top_toolbar: true, hide_legend: true, save_image: false,
           container_id: chartContainerRef.current?.id,
@@ -181,7 +330,7 @@ export default function Dashboard() {
       };
       chartContainerRef.current.appendChild(script);
     }
-  }, [activeTab, session]);
+  }, [activeTab, session, chartInterval]);
 
   async function fetchNews() {
     setErrorMessage(null);
@@ -329,7 +478,6 @@ export default function Dashboard() {
   if (!session) {
     return (
       <div className="min-h-screen bg-[#09090B] flex items-center justify-center p-4 font-sans text-white overflow-hidden relative">
-        {/* Ambient Glow */}
         <div className="absolute top-0 left-1/4 w-[500px] h-[500px] bg-[#FF6600] opacity-10 rounded-full blur-[120px] pointer-events-none"></div>
         
         <div className="relative z-10 w-full max-w-sm">
@@ -380,18 +528,15 @@ export default function Dashboard() {
   return (
     <div className="min-h-screen flex flex-col bg-[#09090B] text-gray-300 font-sans text-sm selection:bg-[#FF6600] selection:text-black pb-24 lg:pb-0 relative">
       
-      {/* Ambient Glow Background */}
       <div className="fixed inset-0 pointer-events-none overflow-hidden z-0">
         <div className="absolute top-0 left-1/4 w-[600px] h-[600px] bg-[#FF6600] opacity-[0.03] rounded-full blur-[120px]"></div>
         <div className="absolute bottom-0 right-1/4 w-[600px] h-[600px] bg-[#FF6600] opacity-[0.02] rounded-full blur-[120px]"></div>
       </div>
 
-      {/* HEADER */}
       <header className="relative z-30 bg-[#09090B]/80 backdrop-blur-2xl border-b border-white/5 sticky top-0">
         <div className="h-0.5 w-full bg-gradient-to-r from-transparent via-[#FF6600] to-transparent opacity-50"></div>
         
         <div className="max-w-[1600px] mx-auto px-4 lg:px-6 h-16 flex items-center justify-between">
-          
           <div className="flex items-center gap-8">
             <div className="flex items-center gap-3">
               <div className="w-8 h-8 rounded-lg bg-[#FF6600] flex items-center justify-center shadow-[0_0_15px_rgba(255,102,0,0.4)]">
@@ -402,31 +547,25 @@ export default function Dashboard() {
 
             <nav className="hidden lg:flex gap-1">
               {navTabs.map((tab) => (
-                <button 
-                  key={tab.id} 
-                  onClick={() => setActiveTab(tab.id as any)}
+                <button key={tab.id} onClick={() => setActiveTab(tab.id as any)}
                   className={`px-4 py-2 rounded-lg text-xs font-semibold transition-all ${
-                    activeTab === tab.id 
-                      ? 'bg-white/10 text-white shadow-sm' 
-                      : 'text-gray-500 hover:text-white hover:bg-white/5'
+                    activeTab === tab.id ? 'bg-white/10 text-white shadow-sm' : 'text-gray-500 hover:text-white hover:bg-white/5'
                   }`}
-                >
-                  {tab.label}
-                </button>
+                >{tab.label}</button>
               ))}
             </nav>
           </div>
 
           <div className="flex items-center gap-4">
+            {/* CLOCK & PRICE — ISOLATED (NO LAG) */}
             <div className="hidden md:flex items-center gap-4 bg-white/[0.03] border border-white/5 rounded-full px-4 py-1.5">
               <div className="flex items-center gap-2">
                 <div className="w-1.5 h-1.5 rounded-full bg-green-500 animate-pulse"></div>
-                <span className="text-[10px] text-gray-400 font-mono tracking-wider">{currentTime} WIB</span>
+                <LiveClock className="text-[10px] text-gray-400 font-mono tracking-wider" />
+                <span className="text-[10px] text-gray-500">WIB</span>
               </div>
               <span className="text-white/10">|</span>
               <span className="text-[10px] font-mono"><span className="text-gray-500">XAU</span> <span className="text-[#FF6600]">{marketData?.['XAU/USD']?.price || '—'}</span></span>
-              <span className="text-white/10">|</span>
-              <span className="text-[10px] font-mono"><span className="text-gray-500">EUR</span> <span className="text-[#FF6600]">{marketData?.['EUR/USD']?.price || '—'}</span></span>
             </div>
 
             {notifPermission !== 'granted' && (
@@ -448,21 +587,30 @@ export default function Dashboard() {
             </button>
           </div>
         </div>
+
+        {/* MARKET SESSIONS BAR — VISIBLE ON ALL DEVICES */}
+        <div className="border-t border-white/5 bg-[#09090B]">
+          <div className="max-w-[1600px] mx-auto px-4 lg:px-6 py-2 flex items-center justify-between gap-3">
+            <div className="hidden sm:flex items-center gap-2 shrink-0">
+              <span className="text-[9px] text-gray-500 uppercase tracking-widest font-bold">Sessions</span>
+            </div>
+            <div className="flex-1 overflow-x-auto custom-scrollbar">
+              <SessionsTracker variant="compact" />
+            </div>
+          </div>
+        </div>
       </header>
 
       <main className="relative z-10 flex-1 max-w-[1600px] w-full mx-auto p-4 lg:p-6">
-        
         {errorMessage && (
           <div className="mb-6 p-4 bg-red-500/10 border border-red-500/20 rounded-2xl text-red-300 text-xs backdrop-blur-xl">
             {errorMessage}
           </div>
         )}
 
-        {/* ============ TAB: MARKETS ============ */}
         {activeTab === 'calendar' && (
           <div className="animate-in fade-in duration-500">
             
-            {/* HERO STATS */}
             <div className="grid grid-cols-2 md:grid-cols-4 gap-3 lg:gap-4 mb-6">
               <div className="bg-white/[0.02] backdrop-blur-xl border border-white/[0.06] rounded-2xl p-5 hover:border-[#FF6600]/20 transition-all">
                 <div className="flex items-center justify-between mb-3">
@@ -491,20 +639,22 @@ export default function Dashboard() {
                 <div className="text-[10px] text-gray-500 mt-1">Major events</div>
               </div>
 
+              {/* COUNTDOWN CARD — ISOLATED */}
               <div className="bg-gradient-to-br from-[#FF6600]/10 to-transparent backdrop-blur-xl border border-[#FF6600]/20 rounded-2xl p-5 hover:border-[#FF6600]/40 transition-all">
                 <div className="flex items-center justify-between mb-3">
                   <span className="text-[10px] text-[#FF6600] uppercase tracking-widest font-medium">Next Catalyst</span>
-                  <span className="text-[10px] text-[#FF6600] font-mono">{countdown}</span>
+                  <CountdownTimer 
+                    targetDate={nextHighImpact?.date || null} 
+                    className="text-[10px] text-[#FF6600]" 
+                  />
                 </div>
                 <div className="text-sm font-semibold text-white truncate">{nextHighImpact?.title || 'No events'}</div>
                 <div className="text-[10px] text-gray-500 mt-1">{nextHighImpact ? `${nextHighImpact.country} · ${formatTimeWIB(nextHighImpact.date)} WIB` : '—'}</div>
               </div>
             </div>
 
-            {/* MAIN GRID */}
             <div className="grid grid-cols-1 lg:grid-cols-12 gap-4 lg:gap-6">
               
-              {/* CALENDAR */}
               <div className="lg:col-span-4 bg-white/[0.02] backdrop-blur-xl border border-white/[0.06] rounded-3xl flex flex-col h-[650px] overflow-hidden">
                 <div className="p-5 flex justify-between items-center border-b border-white/5">
                   <div>
@@ -545,9 +695,8 @@ export default function Dashboard() {
                 </div>
               </div>
 
-              {/* CHART */}
               <div className="lg:col-span-5 bg-white/[0.02] backdrop-blur-xl border border-white/[0.06] rounded-3xl flex flex-col h-[650px] overflow-hidden">
-                <div className="p-5 border-b border-white/5 flex justify-between items-center">
+                <div className="p-5 border-b border-white/5 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3">
                   <div>
                     <h2 className="text-sm font-semibold text-white flex items-center gap-2">
                       <svg className="w-4 h-4 text-[#FF6600]" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -555,14 +704,27 @@ export default function Dashboard() {
                       </svg>
                       Gold / U.S. Dollar
                     </h2>
-                    <p className="text-[10px] text-gray-500 mt-0.5">15-minute interval · Live</p>
                   </div>
-                  <span className="text-[10px] font-mono px-2 py-1 rounded-md bg-[#FF6600]/10 text-[#FF6600] border border-[#FF6600]/20">LIVE</span>
+                  
+                  <div className="flex items-center gap-1 bg-[#09090B] border border-white/10 rounded-xl p-1">
+                    {['1', '5', '15', '60', '240', 'D'].map((tf) => (
+                      <button 
+                        key={tf} 
+                        onClick={() => setChartInterval(tf)}
+                        className={`px-2.5 py-1 rounded-lg text-[10px] font-medium transition-all ${
+                          chartInterval === tf 
+                            ? 'bg-[#FF6600] text-black shadow-[0_0_10px_rgba(255,102,0,0.3)]' 
+                            : 'text-gray-400 hover:text-white hover:bg-white/5'
+                        }`}
+                      >
+                        {tf === 'D' ? '1D' : tf === '60' ? '1H' : tf === '240' ? '4H' : `${tf}m`}
+                      </button>
+                    ))}
+                  </div>
                 </div>
                 <div id="tradingview_chart" ref={chartContainerRef} className="w-full flex-1 rounded-b-3xl overflow-hidden" />
               </div>
 
-              {/* AI PANEL */}
               <div className="lg:col-span-3 bg-white/[0.02] backdrop-blur-xl border border-white/[0.06] rounded-3xl flex flex-col h-[650px] overflow-hidden">
                 <div className="p-5 border-b border-white/5 flex items-center justify-between">
                   <div>
@@ -577,7 +739,6 @@ export default function Dashboard() {
                   {analysis ? (
                     <div className="space-y-4 animate-in fade-in slide-in-from-right-2 duration-300">
                       
-                      {/* SIGNAL CARD */}
                       <div className={`relative rounded-2xl p-6 overflow-hidden ${
                         analysis.direction === 'buy' ? 'bg-gradient-to-br from-green-500/20 via-green-500/5 to-transparent border border-green-500/30' : 
                         analysis.direction === 'sell' ? 'bg-gradient-to-br from-red-500/20 via-red-500/5 to-transparent border border-red-500/30' : 
@@ -593,7 +754,6 @@ export default function Dashboard() {
                         </div>
                       </div>
                       
-                      {/* LEVELS */}
                       <div className="space-y-1">
                         <div className="flex justify-between items-center py-2.5 border-b border-white/5">
                           <span className="text-[10px] text-gray-500 uppercase tracking-wider">Entry</span>
@@ -613,7 +773,6 @@ export default function Dashboard() {
                         </div>
                       </div>
 
-                      {/* RATIONALE */}
                       <div className="pt-2">
                         <div className="text-[10px] text-gray-500 uppercase tracking-wider mb-2">Rationale</div>
                         <div className="text-xs text-gray-300 leading-relaxed">
@@ -626,7 +785,6 @@ export default function Dashboard() {
                         </div>
                       </div>
 
-                      {/* ACTIONS */}
                       <div className="grid grid-cols-2 gap-2 pt-2">
                         <button onClick={() => saveTradeToJournal('win')} className="bg-green-500/10 hover:bg-green-500 text-green-400 hover:text-black border border-green-500/30 py-2.5 rounded-xl text-xs font-semibold transition-all">WIN</button>
                         <button onClick={() => saveTradeToJournal('loss')} className="bg-red-500/10 hover:bg-red-500 text-red-400 hover:text-black border border-red-500/30 py-2.5 rounded-xl text-xs font-semibold transition-all">LOSS</button>
@@ -648,7 +806,6 @@ export default function Dashboard() {
           </div>
         )}
 
-        {/* ============ TAB: SIGNALS ============ */}
         {activeTab === 'daily' && (
           <div className="animate-in fade-in slide-in-from-bottom-2 duration-500">
             
@@ -657,16 +814,11 @@ export default function Dashboard() {
                 <h2 className="text-2xl font-bold text-white tracking-tight">Daily Signals</h2>
                 <p className="text-xs text-gray-500 mt-1">AI-powered setups published for today</p>
               </div>
-              <button 
-                onClick={generateDailySignals} 
-                disabled={isGeneratingDaily}
-                className="bg-[#FF6600] text-black px-5 py-2.5 rounded-xl text-xs font-semibold tracking-wider uppercase shadow-lg shadow-[#FF6600]/20 hover:bg-[#E65C00] disabled:opacity-50 transition-all"
-              >
+              <button onClick={generateDailySignals} disabled={isGeneratingDaily} className="bg-[#FF6600] text-black px-5 py-2.5 rounded-xl text-xs font-semibold tracking-wider uppercase shadow-lg shadow-[#FF6600]/20 hover:bg-[#E65C00] disabled:opacity-50 transition-all">
                 {isGeneratingDaily ? 'Generating...' : dailySignals.length > 0 ? 'Regenerate' : 'Generate Signals'}
               </button>
             </div>
 
-            {/* BENTO STATS */}
             <div className="grid grid-cols-2 md:grid-cols-5 gap-3 mb-8">
               <div className="bg-white/[0.02] backdrop-blur-xl border border-white/[0.06] rounded-2xl p-5">
                 <div className="text-[10px] text-gray-500 uppercase tracking-widest mb-2">Total Signals</div>
@@ -760,7 +912,6 @@ export default function Dashboard() {
           </div>
         )}
 
-        {/* ============ TAB: ARCHIVE ============ */}
         {activeTab === 'history' && (
           <div className="animate-in fade-in slide-in-from-bottom-2 duration-500">
             <div className="mb-8">
@@ -799,7 +950,6 @@ export default function Dashboard() {
           </div>
         )}
 
-        {/* ============ TAB: JOURNAL ============ */}
         {activeTab === 'performance' && (
           <div className="animate-in fade-in slide-in-from-bottom-2 duration-500">
             <div className="mb-8">
@@ -829,12 +979,7 @@ export default function Dashboard() {
             <div className="bg-white/[0.02] backdrop-blur-xl border border-white/[0.06] rounded-3xl overflow-hidden">
               <div className="p-6 border-b border-white/5 flex justify-between items-center">
                 <h3 className="text-sm font-semibold text-white">Execution Ledger</h3>
-                <input 
-                  type="month" 
-                  value={filterMonth} 
-                  onChange={(e) => setFilterMonth(e.target.value)} 
-                  className="bg-white/5 border border-white/10 text-white text-xs px-3 py-2 rounded-lg outline-none focus:border-[#FF6600]/50 transition-all" 
-                />
+                <input type="month" value={filterMonth} onChange={(e) => setFilterMonth(e.target.value)} className="bg-white/5 border border-white/10 text-white text-xs px-3 py-2 rounded-lg outline-none focus:border-[#FF6600]/50 transition-all" />
               </div>
               <div className="overflow-x-auto">
                 <table className="w-full text-left text-xs whitespace-nowrap">
@@ -852,9 +997,7 @@ export default function Dashboard() {
                         <td className="px-6 py-4 text-gray-400 font-mono">{new Date(trade.closed_at).toLocaleDateString('id-ID')}</td>
                         <td className="px-6 py-4 font-semibold text-white">{trade.pair}</td>
                         <td className="px-6 py-4">
-                          <span className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[10px] font-bold ${
-                            trade.result === 'win' ? 'bg-green-500/10 text-green-400' : 'bg-red-500/10 text-red-400'
-                          }`}>
+                          <span className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[10px] font-bold ${trade.result === 'win' ? 'bg-green-500/10 text-green-400' : 'bg-red-500/10 text-red-400'}`}>
                             <span className={`w-1 h-1 rounded-full ${trade.result === 'win' ? 'bg-green-400' : 'bg-red-400'}`}></span>
                             {trade.result.toUpperCase()}
                           </span>
@@ -874,7 +1017,6 @@ export default function Dashboard() {
           </div>
         )}
 
-        {/* ============ TAB: RISK ============ */}
         {activeTab === 'calculator' && (
           <div className="animate-in fade-in slide-in-from-bottom-2 duration-500">
             <div className="mb-8">
@@ -888,36 +1030,21 @@ export default function Dashboard() {
                   <label className="block text-[10px] text-gray-500 font-medium mb-2 uppercase tracking-widest">Account Balance</label>
                   <div className="relative">
                     <span className="absolute left-4 top-1/2 -translate-y-1/2 text-gray-500 text-sm">$</span>
-                    <input 
-                      type="number" 
-                      value={calcBalance} 
-                      onChange={(e) => setCalcBalance(Number(e.target.value))} 
-                      className="w-full bg-white/5 border border-white/10 rounded-xl text-white pl-8 pr-4 py-3 text-lg font-mono outline-none focus:border-[#FF6600]/50 transition-all" 
-                    />
+                    <input type="number" value={calcBalance} onChange={(e) => setCalcBalance(Number(e.target.value))} className="w-full bg-white/5 border border-white/10 rounded-xl text-white pl-8 pr-4 py-3 text-lg font-mono outline-none focus:border-[#FF6600]/50 transition-all" />
                   </div>
                 </div>
                 <div className="grid grid-cols-2 gap-4">
                   <div>
                     <label className="block text-[10px] text-gray-500 font-medium mb-2 uppercase tracking-widest">Risk %</label>
                     <div className="relative">
-                      <input 
-                        type="number" 
-                        value={calcRisk} 
-                        onChange={(e) => setCalcRisk(Number(e.target.value))} 
-                        className="w-full bg-white/5 border border-white/10 rounded-xl text-white px-4 py-3 text-lg font-mono outline-none focus:border-[#FF6600]/50 transition-all" 
-                      />
+                      <input type="number" value={calcRisk} onChange={(e) => setCalcRisk(Number(e.target.value))} className="w-full bg-white/5 border border-white/10 rounded-xl text-white px-4 py-3 text-lg font-mono outline-none focus:border-[#FF6600]/50 transition-all" />
                       <span className="absolute right-4 top-1/2 -translate-y-1/2 text-gray-500 text-sm">%</span>
                     </div>
                   </div>
                   <div>
                     <label className="block text-[10px] text-gray-500 font-medium mb-2 uppercase tracking-widest">Stop Loss</label>
                     <div className="relative">
-                      <input 
-                        type="number" 
-                        value={calcSl} 
-                        onChange={(e) => setCalcSl(Number(e.target.value))} 
-                        className="w-full bg-white/5 border border-white/10 rounded-xl text-white px-4 py-3 text-lg font-mono outline-none focus:border-[#FF6600]/50 transition-all" 
-                      />
+                      <input type="number" value={calcSl} onChange={(e) => setCalcSl(Number(e.target.value))} className="w-full bg-white/5 border border-white/10 rounded-xl text-white px-4 py-3 text-lg font-mono outline-none focus:border-[#FF6600]/50 transition-all" />
                       <span className="absolute right-4 top-1/2 -translate-y-1/2 text-gray-500 text-xs">pips</span>
                     </div>
                   </div>
@@ -941,24 +1068,16 @@ export default function Dashboard() {
         )}
       </main>
 
-      {/* MOBILE BOTTOM NAV */}
       <nav className="lg:hidden fixed bottom-4 left-4 right-4 z-40">
         <div className="bg-[#09090B]/90 backdrop-blur-2xl border border-white/10 rounded-2xl flex justify-around items-center h-16 shadow-2xl">
           {navTabs.map((tab) => (
-            <button 
-              key={tab.id} 
-              onClick={() => setActiveTab(tab.id as any)} 
-              className={`flex flex-col items-center justify-center gap-1 w-full h-full rounded-xl mx-1 transition-all ${
-                activeTab === tab.id ? 'text-[#FF6600] bg-[#FF6600]/10' : 'text-gray-500'
-              }`}
-            >
+            <button key={tab.id} onClick={() => setActiveTab(tab.id as any)} className={`flex flex-col items-center justify-center gap-1 w-full h-full rounded-xl mx-1 transition-all ${activeTab === tab.id ? 'text-[#FF6600] bg-[#FF6600]/10' : 'text-gray-500'}`}>
               <span className="text-[10px] font-medium">{tab.label}</span>
             </button>
           ))}
         </div>
       </nav>
 
-      {/* MODAL ANALISIS */}
       {selectedEvent && !analysis && (
         <div className="fixed inset-0 bg-black/80 backdrop-blur-md flex items-center justify-center p-4 z-50">
           <div className="bg-[#09090B] border border-white/10 rounded-3xl w-full max-w-sm shadow-2xl overflow-hidden animate-in zoom-in-95 duration-300">
@@ -979,11 +1098,7 @@ export default function Dashboard() {
               <form onSubmit={handleAnalyze} className="space-y-4">
                 <div>
                   <label className="block text-[10px] text-gray-500 uppercase tracking-widest mb-2 font-medium">Select Pair</label>
-                  <select 
-                    value={selectedPair} 
-                    onChange={(e) => setSelectedPair(e.target.value)} 
-                    className="w-full bg-white/5 border border-white/10 text-white p-3 rounded-xl text-sm font-mono outline-none focus:border-[#FF6600]/50 transition-all"
-                  >
+                  <select value={selectedPair} onChange={(e) => setSelectedPair(e.target.value)} className="w-full bg-white/5 border border-white/10 text-white p-3 rounded-xl text-sm font-mono outline-none focus:border-[#FF6600]/50 transition-all">
                     <option value="EUR/USD">EUR/USD</option>
                     <option value="XAU/USD">XAU/USD</option>
                     <option value="USD/JPY">USD/JPY</option>
@@ -994,16 +1109,8 @@ export default function Dashboard() {
                   <div className="text-lg font-mono text-[#FF6600] font-semibold">{marketData?.[selectedPair]?.price || '—'}</div>
                 </div>
                 <div className="flex gap-2 pt-2">
-                  <button 
-                    type="button" 
-                    onClick={() => setSelectedEvent(null)} 
-                    className="flex-1 px-4 py-3 rounded-xl text-gray-400 hover:text-white hover:bg-white/5 text-xs font-medium transition-all"
-                  >Cancel</button>
-                  <button 
-                    type="submit" 
-                    disabled={isAnalyzing} 
-                    className="flex-[2] bg-[#FF6600] text-black font-semibold py-3 rounded-xl text-xs shadow-lg shadow-[#FF6600]/20 hover:bg-[#E65C00] disabled:opacity-50 transition-all"
-                  >{isAnalyzing ? 'Processing...' : 'Analyze'}</button>
+                  <button type="button" onClick={() => setSelectedEvent(null)} className="flex-1 px-4 py-3 rounded-xl text-gray-400 hover:text-white hover:bg-white/5 text-xs font-medium transition-all">Cancel</button>
+                  <button type="submit" disabled={isAnalyzing} className="flex-[2] bg-[#FF6600] text-black font-semibold py-3 rounded-xl text-xs shadow-lg shadow-[#FF6600]/20 hover:bg-[#E65C00] disabled:opacity-50 transition-all">{isAnalyzing ? 'Processing...' : 'Analyze'}</button>
                 </div>
               </form>
             </div>
@@ -1011,16 +1118,12 @@ export default function Dashboard() {
         </div>
       )}
 
-      {/* MOBILE SIGNAL RESULT */}
       {analysis && (
         <div className="lg:hidden fixed inset-0 bg-black/90 backdrop-blur-md z-50 overflow-y-auto p-4 flex flex-col">
           <div className="bg-[#09090B] border border-white/10 rounded-3xl w-full max-w-sm mx-auto my-auto shadow-2xl overflow-hidden animate-in zoom-in-95 duration-300">
             <div className="p-5 border-b border-white/5 flex justify-between items-center">
               <h3 className="text-sm font-semibold text-white">Signal Result</h3>
-              <button 
-                onClick={() => { setAnalysis(null); setSelectedEvent(null); }} 
-                className="w-8 h-8 rounded-full bg-white/5 hover:bg-white/10 flex items-center justify-center transition-all"
-              >
+              <button onClick={() => { setAnalysis(null); setSelectedEvent(null); }} className="w-8 h-8 rounded-full bg-white/5 hover:bg-white/10 flex items-center justify-center transition-all">
                 <svg className="w-4 h-4 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
                 </svg>
