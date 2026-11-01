@@ -74,6 +74,8 @@ export default function Dashboard() {
 
     const syncData = async () => { try { await fetch('/api/sync'); fetchMarketData(); } catch (err) {} };
     fetchNews(); fetchMarketData(); fetchJournal(); fetchDailySignals(); syncData();
+    
+    // Polling 5 menit
     const interval = setInterval(() => { fetchNews(); syncData(); }, 300000);
     return () => { clearInterval(interval); clearInterval(timer); };
   }, [nextHighImpact]);
@@ -112,12 +114,22 @@ export default function Dashboard() {
   }
 
   async function fetchMarketData() {
-    try { const res = await fetch('/api/market'); setMarketData(await res.json()); } catch (err) {}
+    try { 
+      const res = await fetch('/api/market'); 
+      const data = await res.json();
+      if (data.error || data.code) {
+        console.error("API Market Error:", data);
+      } else {
+        setMarketData(data); 
+      }
+    } catch (err) { console.error(err); }
   }
+
   async function fetchJournal() {
     const { data, error } = await supabase.from('trade_journal').select('*').order('closed_at', { ascending: false });
     if (!error && data) setJournal(data);
   }
+  
   async function fetchDailySignals() {
     const today = new Date().toISOString().slice(0, 10);
     const { data, error } = await supabase.from('daily_signals').select('*').eq('signal_date', today);
@@ -125,7 +137,10 @@ export default function Dashboard() {
   }
 
   async function generateDailySignals() {
-    if (!marketData) return alert("Data harga belum siap, tunggu sebentar.");
+    if (!marketData || !marketData['XAU/USD']?.price) {
+      return alert("Harga live belum siap. Klik tombol Refresh (ikon panah) di pojok kanan atas.");
+    }
+
     setIsGeneratingDaily(true);
     try {
       const pairsToAnalyze = [
@@ -142,7 +157,7 @@ export default function Dashboard() {
         body: JSON.stringify({ pairs: pairsToAnalyze }),
       });
       const signals = await res.json();
-      if (!Array.isArray(signals)) throw new Error(signals.error || 'Gagal generate');
+      if (!Array.isArray(signals)) throw new Error(signals.error || 'Gagal generate dari AI');
 
       const today = new Date().toISOString().slice(0, 10);
       const toInsert = signals.map((s: any) => ({
@@ -154,7 +169,9 @@ export default function Dashboard() {
       const { error } = await supabase.from('daily_signals').upsert(toInsert, { onConflict: 'signal_date,pair' });
       if (error) throw error;
       fetchDailySignals();
-    } catch (err: any) { alert('Gagal: ' + err.message); }
+    } catch (err: any) { 
+      alert('Gagal: ' + err.message); 
+    }
     setIsGeneratingDaily(false);
   }
 
@@ -198,10 +215,12 @@ export default function Dashboard() {
     if (dateFilter === 'yesterday') return evDate >= yesterday && evDate < today;
     return true;
   });
+  
   const importantEvents = filteredByDate.filter(e => {
     if (focusMode) return e.impact === 'High';
     return e.impact === 'High' || e.impact === 'Medium';
   });
+  
   const pastEvents = events.filter(e => new Date(e.date) < today).reverse();
   const filteredJournal = filterMonth ? journal.filter(t => t.closed_at.startsWith(filterMonth)) : journal;
   const totalTrades = filteredJournal.length;
@@ -232,6 +251,7 @@ export default function Dashboard() {
 
   return (
     <div className="min-h-screen flex flex-col bg-[#050505] font-sans selection:bg-[#D4AF37]/30 pb-20 lg:pb-10">
+      
       {/* HEADER */}
       <header className="border-b border-white/5 bg-[#050505]/90 backdrop-blur-2xl sticky top-0 z-40">
         <div className="max-w-[1500px] mx-auto px-4 lg:px-6 h-16 lg:h-20 flex items-center justify-between">
