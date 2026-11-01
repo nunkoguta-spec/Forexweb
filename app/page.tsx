@@ -7,9 +7,6 @@ const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || '';
 const supabaseKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || '';
 const supabase = createClient(supabaseUrl, supabaseKey);
 
-/* ============================================================
-   HELPER: FORMAT COUNTDOWN
-   ============================================================ */
 function formatCountdown(diffMs: number): string {
   if (diffMs <= 0) return '00:00:00';
   const h = Math.floor(diffMs / 3600000);
@@ -18,13 +15,8 @@ function formatCountdown(diffMs: number): string {
   return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`;
 }
 
-/* ============================================================
-   ISOLATED COMPONENT: LIVE CLOCK
-   Only this component re-renders every second
-   ============================================================ */
 function LiveClock({ className = '' }: { className?: string }) {
   const [time, setTime] = useState('');
-  
   useEffect(() => {
     function tick() {
       setTime(new Date().toLocaleTimeString('id-ID', { 
@@ -38,39 +30,25 @@ function LiveClock({ className = '' }: { className?: string }) {
     document.addEventListener('visibilitychange', onVis);
     return () => { clearInterval(timer); document.removeEventListener('visibilitychange', onVis); };
   }, []);
-  
   return <span className={className}>{time || '--:--:--'}</span>;
 }
 
-/* ============================================================
-   ISOLATED COMPONENT: COUNTDOWN TIMER
-   Only this component re-renders every second
-   ============================================================ */
 function CountdownTimer({ targetDate, className = '' }: { targetDate: string | null; className?: string }) {
   const [display, setDisplay] = useState('00:00:00');
-  
   useEffect(() => {
     if (!targetDate) { setDisplay('—'); return; }
     const target = new Date(targetDate).getTime();
     if (isNaN(target)) { setDisplay('—'); return; }
-    
-    function tick() {
-      setDisplay(formatCountdown(target - Date.now()));
-    }
+    function tick() { setDisplay(formatCountdown(target - Date.now())); }
     tick();
     const timer = setInterval(tick, 1000);
     const onVis = () => { if (document.visibilityState === 'visible') tick(); };
     document.addEventListener('visibilitychange', onVis);
     return () => { clearInterval(timer); document.removeEventListener('visibilitychange', onVis); };
   }, [targetDate]);
-  
   return <span className={`font-mono tabular-nums ${className}`}>{display}</span>;
 }
 
-/* ============================================================
-   ISOLATED COMPONENT: MARKET SESSIONS TRACKER
-   Works on both desktop and mobile
-   ============================================================ */
 const SESSION_DATA = [
   { key: 'SYD', name: 'Sydney', openUTC: 21, closeUTC: 6 },
   { key: 'TYO', name: 'Tokyo', openUTC: 0, closeUTC: 9 },
@@ -78,35 +56,24 @@ const SESSION_DATA = [
   { key: 'NYC', name: 'New York', openUTC: 12, closeUTC: 21 },
 ];
 
-function SessionsTracker({ variant = 'default' }: { variant?: 'default' | 'compact' }) {
+function SessionsTracker() {
   const [sessions, setSessions] = useState<{ key: string; name: string; isOpen: boolean; timeInfo: string }[]>([]);
-  
   useEffect(() => {
     function calc() {
       const now = new Date();
       const utcH = now.getUTCHours() + now.getUTCMinutes() / 60;
-      
       const result = SESSION_DATA.map(s => {
-        let isOpen: boolean;
-        let closeDiff: number;
-        
+        let isOpen: boolean, closeDiff: number;
         if (s.openUTC < s.closeUTC) {
           isOpen = utcH >= s.openUTC && utcH < s.closeUTC;
           closeDiff = isOpen ? s.closeUTC - utcH : (s.openUTC > utcH ? s.openUTC - utcH : 24 - utcH + s.openUTC);
         } else {
           isOpen = utcH >= s.openUTC || utcH < s.closeUTC;
-          if (isOpen) {
-            closeDiff = utcH < s.closeUTC ? s.closeUTC - utcH : 24 - utcH + s.closeUTC;
-          } else {
-            closeDiff = s.openUTC - utcH;
-          }
+          closeDiff = isOpen ? (utcH < s.closeUTC ? s.closeUTC - utcH : 24 - utcH + s.closeUTC) : (s.openUTC - utcH);
         }
-        
         const h = Math.floor(closeDiff);
         const m = Math.floor((closeDiff - h) * 60);
-        const timeInfo = isOpen ? `${h}h ${m}m left` : `in ${h}h ${m}m`;
-        
-        return { key: s.key, name: s.name, isOpen, timeInfo };
+        return { key: s.key, name: s.name, isOpen, timeInfo: isOpen ? `${h}h ${m}m left` : `in ${h}h ${m}m` };
       });
       setSessions(result);
     }
@@ -117,53 +84,19 @@ function SessionsTracker({ variant = 'default' }: { variant?: 'default' | 'compa
     return () => { clearInterval(timer); document.removeEventListener('visibilitychange', onVis); };
   }, []);
   
-  if (variant === 'compact') {
-    return (
-      <div className="flex items-center gap-2 overflow-x-auto custom-scrollbar">
-        {sessions.map((s) => (
-          <div 
-            key={s.key} 
-            className={`flex items-center gap-1.5 px-2 py-1 rounded-md border shrink-0 ${
-              s.isOpen 
-                ? 'bg-green-500/10 border-green-500/30' 
-                : 'bg-white/[0.02] border-white/5'
-            }`}
-          >
-            <span className={`w-1.5 h-1.5 rounded-full ${s.isOpen ? 'bg-green-400 shadow-[0_0_6px_rgba(34,197,94,0.8)]' : 'bg-gray-600'}`}></span>
-            <span className={`text-[9px] font-bold tracking-wider ${s.isOpen ? 'text-green-400' : 'text-gray-500'}`}>{s.key}</span>
-          </div>
-        ))}
-      </div>
-    );
-  }
-  
   return (
-    <div className="flex flex-wrap items-center gap-2">
+    <div className="flex items-center gap-2 overflow-x-auto custom-scrollbar">
       {sessions.map((s) => (
-        <div 
-          key={s.key} 
-          className={`flex items-center gap-2 px-3 py-1.5 rounded-lg border transition-all ${
-            s.isOpen 
-              ? 'bg-green-500/10 border-green-500/30' 
-              : 'bg-white/[0.02] border-white/5'
-          }`}
-        >
-          <span className={`w-1.5 h-1.5 rounded-full ${s.isOpen ? 'bg-green-400 shadow-[0_0_6px_rgba(34,197,94,0.8)] animate-pulse' : 'bg-gray-600'}`}></span>
-          <span className={`text-[10px] font-bold tracking-wider ${s.isOpen ? 'text-green-400' : 'text-gray-500'}`}>
-            {s.name.toUpperCase()}
-          </span>
-          <span className={`text-[9px] tabular-nums ${s.isOpen ? 'text-green-400/70' : 'text-gray-600'}`}>
-            {s.timeInfo}
-          </span>
+        <div key={s.key} className={`flex items-center gap-1.5 px-2 py-1 rounded-md border shrink-0 ${s.isOpen ? 'bg-green-500/10 border-green-500/30' : 'bg-white/[0.02] border-white/5'}`}>
+          <span className={`w-1.5 h-1.5 rounded-full ${s.isOpen ? 'bg-green-400 shadow-[0_0_6px_rgba(34,197,94,0.8)]' : 'bg-gray-600'}`}></span>
+          <span className={`text-[9px] font-bold tracking-wider ${s.isOpen ? 'text-green-400' : 'text-gray-500'}`}>{s.key}</span>
+          <span className={`text-[9px] tabular-nums hidden sm:inline ${s.isOpen ? 'text-green-400/70' : 'text-gray-600'}`}>{s.timeInfo}</span>
         </div>
       ))}
     </div>
   );
 }
 
-/* ============================================================
-   MAIN DASHBOARD
-   ============================================================ */
 export default function Dashboard() {
   const [session, setSession] = useState<any>(null);
   const [isAuthLoading, setIsAuthLoading] = useState(true);
@@ -179,28 +112,22 @@ export default function Dashboard() {
   const [journal, setJournal] = useState<any[]>([]);
   const [dailySignals, setDailySignals] = useState<any[]>([]);
   const [isGeneratingDaily, setIsGeneratingDaily] = useState(false);
-  
   const [chartInterval, setChartInterval] = useState('15'); 
-  
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [selectedEvent, setSelectedEvent] = useState<any>(null);
   const [analysis, setAnalysis] = useState<any>(null);
   const [selectedPair, setSelectedPair] = useState<string>('XAU/USD');
-  
   const [isSavingTrade, setIsSavingTrade] = useState(false);
   const [filterMonth, setFilterMonth] = useState('');
   const [focusMode, setFocusMode] = useState(false);
   const [dateFilter, setDateFilter] = useState<'yesterday' | 'today' | 'tomorrow'>('today');
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [isRefreshing, setIsRefreshing] = useState(false);
-
   const [calcBalance, setCalcBalance] = useState<number | ''>(10000);
   const [calcRisk, setCalcRisk] = useState<number | ''>(1);
   const [calcSl, setCalcSl] = useState<number | ''>(20);
-
   const [nextHighImpact, setNextHighImpact] = useState<any>(null);
   const chartContainerRef = useRef<HTMLDivElement>(null);
-
   const [notifPermission, setNotifPermission] = useState<string>('default');
   const [notifiedEvents, setNotifiedEvents] = useState<string[]>([]);
 
@@ -226,7 +153,6 @@ export default function Dashboard() {
     }
   }
 
-  // Notification checker (uses setInterval but lightweight)
   useEffect(() => {
     if (notifPermission !== 'granted' || !nextHighImpact) return;
     const timer = setInterval(() => {
@@ -236,7 +162,7 @@ export default function Dashboard() {
         new Notification("High Impact Alert", { body: `${nextHighImpact.title} in ${Math.ceil(diffMinutes)} min`, icon: '/logo.png' });
         setNotifiedEvents(prev => [...prev, nextHighImpact.title]);
       }
-    }, 30000); // check every 30s
+    }, 30000);
     return () => clearInterval(timer);
   }, [nextHighImpact, notifPermission, notifiedEvents]);
 
@@ -300,11 +226,9 @@ export default function Dashboard() {
     setTimeout(() => setIsRefreshing(false), 800);
   }
 
-  // Main data effect — NO clock/countdown here to avoid re-renders
   useEffect(() => {
     if (!session) return;
     setFilterMonth(new Date().toISOString().slice(0, 7));
-    
     const syncData = async () => { try { await fetch('/api/sync'); fetchMarketData(); } catch (err) {} };
     fetchNews(); fetchMarketData(); fetchJournal(); fetchDailySignals(); syncData();
     const interval = setInterval(() => { fetchNews(); syncData(); }, 60000); 
@@ -319,11 +243,8 @@ export default function Dashboard() {
       script.async = true;
       script.onload = () => {
         new (window as any).TradingView.widget({
-          autosize: true, 
-          symbol: "OANDA:XAUUSD", 
-          interval: chartInterval,
-          timezone: "Asia/Jakarta",
-          theme: "dark", style: "1", locale: "id", toolbar_bg: "#09090B",
+          autosize: true, symbol: "OANDA:XAUUSD", interval: chartInterval,
+          timezone: "Asia/Jakarta", theme: "dark", style: "1", locale: "id", toolbar_bg: "#09090B",
           enable_publishing: false, hide_top_toolbar: true, hide_legend: true, save_image: false,
           container_id: chartContainerRef.current?.id,
         });
@@ -457,11 +378,32 @@ export default function Dashboard() {
   }
 
   const navTabs = [
-    { id: 'calendar', label: 'Markets' },
-    { id: 'daily', label: 'Signals' },
-    { id: 'history', label: 'Archive' },
-    { id: 'performance', label: 'Journal' },
-    { id: 'calculator', label: 'Risk' },
+    { id: 'calendar', label: 'Markets', icon: (
+      <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+        <path strokeLinecap="round" strokeLinejoin="round" d="M3 13l4-4 3 3 4-6 4 5 3-3" />
+        <path strokeLinecap="round" strokeLinejoin="round" d="M3 21h18" />
+      </svg>
+    )},
+    { id: 'daily', label: 'Signals', icon: (
+      <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+        <path strokeLinecap="round" strokeLinejoin="round" d="M13 10V3L4 14h7v7l9-11h-7z" />
+      </svg>
+    )},
+    { id: 'history', label: 'Archive', icon: (
+      <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+        <path strokeLinecap="round" strokeLinejoin="round" d="M5 8h14M5 8a2 2 0 110-4h14a2 2 0 110 4M5 8v10a2 2 0 002 2h10a2 2 0 002-2V8m-9 4h4" />
+      </svg>
+    )},
+    { id: 'performance', label: 'Journal', icon: (
+      <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+        <path strokeLinecap="round" strokeLinejoin="round" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+      </svg>
+    )},
+    { id: 'calculator', label: 'Risk', icon: (
+      <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+        <path strokeLinecap="round" strokeLinejoin="round" d="M9 7h6m-6 4h6m-6 4h6m-6 4h6M5 5h14a2 2 0 012 2v12a2 2 0 01-2 2H5a2 2 0 01-2-2V7a2 2 0 012-2z" />
+      </svg>
+    )},
   ];
 
   if (isAuthLoading) {
@@ -479,7 +421,6 @@ export default function Dashboard() {
     return (
       <div className="min-h-screen bg-[#09090B] flex items-center justify-center p-4 font-sans text-white overflow-hidden relative">
         <div className="absolute top-0 left-1/4 w-[500px] h-[500px] bg-[#FF6600] opacity-10 rounded-full blur-[120px] pointer-events-none"></div>
-        
         <div className="relative z-10 w-full max-w-sm">
           <div className="text-center mb-10">
             <div className="inline-flex items-center justify-center w-16 h-16 rounded-2xl bg-[#FF6600] shadow-[0_0_40px_rgba(255,102,0,0.4)] mb-6">
@@ -488,18 +429,15 @@ export default function Dashboard() {
             <h1 className="text-3xl font-bold tracking-tight text-white mb-2">NewssAI</h1>
             <p className="text-xs text-gray-500 tracking-widest uppercase">Terminal Access</p>
           </div>
-
           <div className="bg-white/[0.02] backdrop-blur-xl border border-white/10 rounded-3xl p-8 shadow-2xl">
             <h2 className="text-lg font-semibold text-white text-center mb-8">
               {authMode === 'login' ? 'Welcome back' : 'Create account'}
             </h2>
-
             {authMessage && (
               <div className={`mb-6 p-3 text-xs rounded-xl border ${authMessage.type === 'error' ? 'bg-red-500/10 border-red-500/30 text-red-300' : 'bg-green-500/10 border-green-500/30 text-green-300'}`}>
                 {authMessage.text}
               </div>
             )}
-
             <form onSubmit={handleAuth} className="space-y-4">
               <div>
                 <label className="block text-[10px] text-gray-500 uppercase tracking-widest mb-2 font-medium">Email</label>
@@ -513,7 +451,6 @@ export default function Dashboard() {
                 {isAuthProcessing ? 'Processing...' : authMode === 'login' ? 'Sign in' : 'Create account'}
               </button>
             </form>
-
             <div className="mt-6 text-center">
               <button onClick={() => { setAuthMode(authMode === 'login' ? 'register' : 'login'); setAuthMessage(null); }} className="text-xs text-gray-500 hover:text-[#FF6600] transition-colors">
                 {authMode === 'login' ? "Don't have an account? Sign up" : 'Already have an account? Sign in'}
@@ -526,7 +463,7 @@ export default function Dashboard() {
   }
 
   return (
-    <div className="min-h-screen flex flex-col bg-[#09090B] text-gray-300 font-sans text-sm selection:bg-[#FF6600] selection:text-black pb-24 lg:pb-0 relative">
+    <div className="min-h-screen flex flex-col bg-[#09090B] text-gray-300 font-sans text-sm selection:bg-[#FF6600] selection:text-black pb-28 lg:pb-0 relative">
       
       <div className="fixed inset-0 pointer-events-none overflow-hidden z-0">
         <div className="absolute top-0 left-1/4 w-[600px] h-[600px] bg-[#FF6600] opacity-[0.03] rounded-full blur-[120px]"></div>
@@ -548,54 +485,55 @@ export default function Dashboard() {
             <nav className="hidden lg:flex gap-1">
               {navTabs.map((tab) => (
                 <button key={tab.id} onClick={() => setActiveTab(tab.id as any)}
-                  className={`px-4 py-2 rounded-lg text-xs font-semibold transition-all ${
+                  className={`px-4 py-2 rounded-lg text-xs font-semibold transition-all flex items-center gap-2 ${
                     activeTab === tab.id ? 'bg-white/10 text-white shadow-sm' : 'text-gray-500 hover:text-white hover:bg-white/5'
                   }`}
-                >{tab.label}</button>
+                >
+                  {tab.icon}
+                  {tab.label}
+                </button>
               ))}
             </nav>
           </div>
 
-          <div className="flex items-center gap-4">
-            {/* CLOCK & PRICE — ISOLATED (NO LAG) */}
-            <div className="hidden md:flex items-center gap-4 bg-white/[0.03] border border-white/5 rounded-full px-4 py-1.5">
-              <div className="flex items-center gap-2">
-                <div className="w-1.5 h-1.5 rounded-full bg-green-500 animate-pulse"></div>
-                <LiveClock className="text-[10px] text-gray-400 font-mono tracking-wider" />
-                <span className="text-[10px] text-gray-500">WIB</span>
-              </div>
-              <span className="text-white/10">|</span>
+          <div className="flex items-center gap-2 sm:gap-4">
+            <div className="hidden md:flex items-center gap-3 bg-white/[0.03] border border-white/5 rounded-full px-4 py-1.5">
               <span className="text-[10px] font-mono"><span className="text-gray-500">XAU</span> <span className="text-[#FF6600]">{marketData?.['XAU/USD']?.price || '—'}</span></span>
             </div>
 
             {notifPermission !== 'granted' && (
-              <button onClick={requestNotifPermission} className="text-[10px] font-semibold text-[#FF6600] hover:text-white transition-colors px-3 py-1.5 rounded-lg border border-[#FF6600]/30 hover:bg-[#FF6600]/10">
-                Enable Alerts
+              <button onClick={requestNotifPermission} className="text-[10px] font-semibold text-[#FF6600] hover:text-white transition-colors px-2.5 sm:px-3 py-1.5 rounded-lg border border-[#FF6600]/30 hover:bg-[#FF6600]/10">
+                <span className="hidden sm:inline">Enable Alerts</span>
+                <span className="sm:hidden">🔔</span>
               </button>
             )}
             
-            <button onClick={handleRefresh} disabled={isRefreshing} className="w-9 h-9 rounded-full bg-white/[0.03] border border-white/5 hover:bg-white/[0.06] flex items-center justify-center transition-all">
-              <svg className={`w-4 h-4 text-gray-400 ${isRefreshing ? 'animate-spin' : ''}`} fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <button onClick={handleRefresh} disabled={isRefreshing} className="w-8 h-8 sm:w-9 sm:h-9 rounded-full bg-white/[0.03] border border-white/5 hover:bg-white/[0.06] flex items-center justify-center transition-all">
+              <svg className={`w-3.5 h-3.5 sm:w-4 sm:h-4 text-gray-400 ${isRefreshing ? 'animate-spin' : ''}`} fill="none" viewBox="0 0 24 24" stroke="currentColor">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
               </svg>
             </button>
 
-            <button onClick={handleLogout} className="w-9 h-9 rounded-full bg-white/[0.03] border border-white/5 hover:bg-red-500/10 hover:border-red-500/30 flex items-center justify-center transition-all group">
-              <svg className="w-4 h-4 text-gray-400 group-hover:text-red-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <button onClick={handleLogout} className="w-8 h-8 sm:w-9 sm:h-9 rounded-full bg-white/[0.03] border border-white/5 hover:bg-red-500/10 hover:border-red-500/30 flex items-center justify-center transition-all group">
+              <svg className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-gray-400 group-hover:text-red-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1" />
               </svg>
             </button>
           </div>
         </div>
 
-        {/* MARKET SESSIONS BAR — VISIBLE ON ALL DEVICES */}
         <div className="border-t border-white/5 bg-[#09090B]">
-          <div className="max-w-[1600px] mx-auto px-4 lg:px-6 py-2 flex items-center justify-between gap-3">
-            <div className="hidden sm:flex items-center gap-2 shrink-0">
-              <span className="text-[9px] text-gray-500 uppercase tracking-widest font-bold">Sessions</span>
+          <div className="max-w-[1600px] mx-auto px-4 lg:px-6 py-2 flex items-center justify-between gap-2">
+            <div className="flex items-center gap-2 min-w-0 flex-1">
+              <span className="text-[9px] text-gray-500 uppercase tracking-widest font-bold hidden lg:inline shrink-0">Sessions</span>
+              <div className="overflow-x-auto custom-scrollbar min-w-0">
+                <SessionsTracker />
+              </div>
             </div>
-            <div className="flex-1 overflow-x-auto custom-scrollbar">
-              <SessionsTracker variant="compact" />
+            <div className="flex items-center gap-1.5 shrink-0 bg-white/[0.03] border border-white/5 rounded-full px-2.5 sm:px-3 py-1">
+              <span className="w-1.5 h-1.5 rounded-full bg-green-500 animate-pulse"></span>
+              <LiveClock className="text-[10px] sm:text-[11px] text-gray-200 font-mono tracking-wider tabular-nums" />
+              <span className="text-[9px] sm:text-[10px] text-gray-500 font-medium">WIB</span>
             </div>
           </div>
         </div>
@@ -610,55 +548,46 @@ export default function Dashboard() {
 
         {activeTab === 'calendar' && (
           <div className="animate-in fade-in duration-500">
-            
             <div className="grid grid-cols-2 md:grid-cols-4 gap-3 lg:gap-4 mb-6">
-              <div className="bg-white/[0.02] backdrop-blur-xl border border-white/[0.06] rounded-2xl p-5 hover:border-[#FF6600]/20 transition-all">
+              <div className="bg-white/[0.02] backdrop-blur-xl border border-white/[0.06] rounded-2xl p-4 sm:p-5 hover:border-[#FF6600]/20 transition-all">
                 <div className="flex items-center justify-between mb-3">
-                  <span className="text-[10px] text-gray-500 uppercase tracking-widest font-medium">Gold Spot</span>
-                  <span className="text-[10px] text-green-400 font-mono">▲ Live</span>
+                  <span className="text-[10px] text-gray-500 uppercase tracking-widest font-medium">Gold</span>
+                  <span className="text-[10px] text-green-400 font-mono">▲</span>
                 </div>
-                <div className="text-2xl font-mono font-semibold text-white">{marketData?.['XAU/USD']?.price || '—'}</div>
+                <div className="text-xl sm:text-2xl font-mono font-semibold text-white">{marketData?.['XAU/USD']?.price || '—'}</div>
                 <div className="text-[10px] text-gray-500 mt-1">XAU / USD</div>
               </div>
-
-              <div className="bg-white/[0.02] backdrop-blur-xl border border-white/[0.06] rounded-2xl p-5 hover:border-[#FF6600]/20 transition-all">
+              <div className="bg-white/[0.02] backdrop-blur-xl border border-white/[0.06] rounded-2xl p-4 sm:p-5 hover:border-[#FF6600]/20 transition-all">
                 <div className="flex items-center justify-between mb-3">
                   <span className="text-[10px] text-gray-500 uppercase tracking-widest font-medium">Euro</span>
-                  <span className="text-[10px] text-red-400 font-mono">▼ Live</span>
+                  <span className="text-[10px] text-red-400 font-mono">▼</span>
                 </div>
-                <div className="text-2xl font-mono font-semibold text-white">{marketData?.['EUR/USD']?.price || '—'}</div>
+                <div className="text-xl sm:text-2xl font-mono font-semibold text-white">{marketData?.['EUR/USD']?.price || '—'}</div>
                 <div className="text-[10px] text-gray-500 mt-1">EUR / USD</div>
               </div>
-
-              <div className="bg-white/[0.02] backdrop-blur-xl border border-white/[0.06] rounded-2xl p-5 hover:border-[#FF6600]/20 transition-all">
+              <div className="bg-white/[0.02] backdrop-blur-xl border border-white/[0.06] rounded-2xl p-4 sm:p-5 hover:border-[#FF6600]/20 transition-all">
                 <div className="flex items-center justify-between mb-3">
                   <span className="text-[10px] text-gray-500 uppercase tracking-widest font-medium">High Impact</span>
                   <span className="text-[10px] text-[#FF6600] font-mono">Today</span>
                 </div>
-                <div className="text-2xl font-mono font-semibold text-white">{highImpactToday}</div>
+                <div className="text-xl sm:text-2xl font-mono font-semibold text-white">{highImpactToday}</div>
                 <div className="text-[10px] text-gray-500 mt-1">Major events</div>
               </div>
-
-              {/* COUNTDOWN CARD — ISOLATED */}
-              <div className="bg-gradient-to-br from-[#FF6600]/10 to-transparent backdrop-blur-xl border border-[#FF6600]/20 rounded-2xl p-5 hover:border-[#FF6600]/40 transition-all">
+              <div className="bg-gradient-to-br from-[#FF6600]/10 to-transparent backdrop-blur-xl border border-[#FF6600]/20 rounded-2xl p-4 sm:p-5 hover:border-[#FF6600]/40 transition-all">
                 <div className="flex items-center justify-between mb-3">
-                  <span className="text-[10px] text-[#FF6600] uppercase tracking-widest font-medium">Next Catalyst</span>
-                  <CountdownTimer 
-                    targetDate={nextHighImpact?.date || null} 
-                    className="text-[10px] text-[#FF6600]" 
-                  />
+                  <span className="text-[10px] text-[#FF6600] uppercase tracking-widest font-medium">Next</span>
+                  <CountdownTimer targetDate={nextHighImpact?.date || null} className="text-[10px] text-[#FF6600]" />
                 </div>
                 <div className="text-sm font-semibold text-white truncate">{nextHighImpact?.title || 'No events'}</div>
-                <div className="text-[10px] text-gray-500 mt-1">{nextHighImpact ? `${nextHighImpact.country} · ${formatTimeWIB(nextHighImpact.date)} WIB` : '—'}</div>
+                <div className="text-[10px] text-gray-500 mt-1">{nextHighImpact ? `${nextHighImpact.country} · ${formatTimeWIB(nextHighImpact.date)}` : '—'}</div>
               </div>
             </div>
 
             <div className="grid grid-cols-1 lg:grid-cols-12 gap-4 lg:gap-6">
-              
               <div className="lg:col-span-4 bg-white/[0.02] backdrop-blur-xl border border-white/[0.06] rounded-3xl flex flex-col h-[650px] overflow-hidden">
                 <div className="p-5 flex justify-between items-center border-b border-white/5">
                   <div>
-                    <h2 className="text-sm font-semibold text-white">Economic Calendar</h2>
+                    <h2 className="text-sm font-semibold text-white">Calendar</h2>
                     <p className="text-[10px] text-gray-500 mt-0.5">Filter by date</p>
                   </div>
                   <div className="flex gap-1 bg-white/5 rounded-lg p-0.5">
@@ -684,7 +613,7 @@ export default function Dashboard() {
                           <span className={`w-1.5 h-1.5 rounded-full ${ev.impact === 'High' ? 'bg-red-500 shadow-[0_0_8px_rgba(239,68,68,0.6)]' : 'bg-amber-400'}`}></span>
                           <span className="text-[10px] text-gray-500 font-mono">{formatDateWIB(ev.date)} · {formatTimeWIB(ev.date)}</span>
                         </div>
-                        <span className="text-[10px] font-bold text-[#FF6600] opacity-0 group-hover:opacity-100 transition-opacity">ANALYZE →</span>
+                        <span className="text-[10px] font-bold text-[#FF6600] opacity-0 group-hover:opacity-100 transition-opacity">→</span>
                       </div>
                       <div className="flex items-center gap-2">
                         <span className="text-[10px] font-bold text-[#FF6600] w-8">{ev.country}</span>
@@ -702,23 +631,16 @@ export default function Dashboard() {
                       <svg className="w-4 h-4 text-[#FF6600]" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                         <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 7h8m0 0v8m0-8l-8 8-4-4-6 6" />
                       </svg>
-                      Gold / U.S. Dollar
+                      XAU / USD
                     </h2>
                   </div>
-                  
                   <div className="flex items-center gap-1 bg-[#09090B] border border-white/10 rounded-xl p-1">
                     {['1', '5', '15', '60', '240', 'D'].map((tf) => (
-                      <button 
-                        key={tf} 
-                        onClick={() => setChartInterval(tf)}
-                        className={`px-2.5 py-1 rounded-lg text-[10px] font-medium transition-all ${
-                          chartInterval === tf 
-                            ? 'bg-[#FF6600] text-black shadow-[0_0_10px_rgba(255,102,0,0.3)]' 
-                            : 'text-gray-400 hover:text-white hover:bg-white/5'
+                      <button key={tf} onClick={() => setChartInterval(tf)}
+                        className={`px-2 sm:px-2.5 py-1 rounded-lg text-[10px] font-medium transition-all ${
+                          chartInterval === tf ? 'bg-[#FF6600] text-black shadow-[0_0_10px_rgba(255,102,0,0.3)]' : 'text-gray-400 hover:text-white hover:bg-white/5'
                         }`}
-                      >
-                        {tf === 'D' ? '1D' : tf === '60' ? '1H' : tf === '240' ? '4H' : `${tf}m`}
-                      </button>
+                      >{tf === 'D' ? '1D' : tf === '60' ? '1H' : tf === '240' ? '4H' : `${tf}m`}</button>
                     ))}
                   </div>
                 </div>
@@ -738,7 +660,6 @@ export default function Dashboard() {
                 <div className="flex-1 p-4 overflow-y-auto custom-scrollbar">
                   {analysis ? (
                     <div className="space-y-4 animate-in fade-in slide-in-from-right-2 duration-300">
-                      
                       <div className={`relative rounded-2xl p-6 overflow-hidden ${
                         analysis.direction === 'buy' ? 'bg-gradient-to-br from-green-500/20 via-green-500/5 to-transparent border border-green-500/30' : 
                         analysis.direction === 'sell' ? 'bg-gradient-to-br from-red-500/20 via-red-500/5 to-transparent border border-red-500/30' : 
@@ -753,18 +674,17 @@ export default function Dashboard() {
                           <div className="text-[10px] text-white/40 font-mono mt-2">Live: {analysis.current_price}</div>
                         </div>
                       </div>
-                      
                       <div className="space-y-1">
                         <div className="flex justify-between items-center py-2.5 border-b border-white/5">
                           <span className="text-[10px] text-gray-500 uppercase tracking-wider">Entry</span>
                           <span className="text-sm font-mono font-semibold text-white">{analysis.entry_zone}</span>
                         </div>
                         <div className="flex justify-between items-center py-2.5 border-b border-white/5">
-                          <span className="text-[10px] text-red-400/70 uppercase tracking-wider">Stop Loss</span>
+                          <span className="text-[10px] text-red-400/70 uppercase tracking-wider">Stop</span>
                           <span className="text-sm font-mono font-semibold text-red-400">{analysis.stop_loss}</span>
                         </div>
                         <div className="flex justify-between items-center py-2.5 border-b border-white/5">
-                          <span className="text-[10px] text-green-400/70 uppercase tracking-wider">Take Profit</span>
+                          <span className="text-[10px] text-green-400/70 uppercase tracking-wider">Target</span>
                           <span className="text-sm font-mono font-semibold text-green-400">{analysis.take_profit}</span>
                         </div>
                         <div className="flex justify-between items-center py-2.5">
@@ -772,7 +692,6 @@ export default function Dashboard() {
                           <span className="text-sm font-mono font-semibold text-[#FF6600]">1:{rrRatio}</span>
                         </div>
                       </div>
-
                       <div className="pt-2">
                         <div className="text-[10px] text-gray-500 uppercase tracking-wider mb-2">Rationale</div>
                         <div className="text-xs text-gray-300 leading-relaxed">
@@ -784,7 +703,6 @@ export default function Dashboard() {
                           )}
                         </div>
                       </div>
-
                       <div className="grid grid-cols-2 gap-2 pt-2">
                         <button onClick={() => saveTradeToJournal('win')} className="bg-green-500/10 hover:bg-green-500 text-green-400 hover:text-black border border-green-500/30 py-2.5 rounded-xl text-xs font-semibold transition-all">WIN</button>
                         <button onClick={() => saveTradeToJournal('loss')} className="bg-red-500/10 hover:bg-red-500 text-red-400 hover:text-black border border-red-500/30 py-2.5 rounded-xl text-xs font-semibold transition-all">LOSS</button>
@@ -808,7 +726,6 @@ export default function Dashboard() {
 
         {activeTab === 'daily' && (
           <div className="animate-in fade-in slide-in-from-bottom-2 duration-500">
-            
             <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 mb-8">
               <div>
                 <h2 className="text-2xl font-bold text-white tracking-tight">Daily Signals</h2>
@@ -820,25 +737,25 @@ export default function Dashboard() {
             </div>
 
             <div className="grid grid-cols-2 md:grid-cols-5 gap-3 mb-8">
-              <div className="bg-white/[0.02] backdrop-blur-xl border border-white/[0.06] rounded-2xl p-5">
-                <div className="text-[10px] text-gray-500 uppercase tracking-widest mb-2">Total Signals</div>
-                <div className="text-3xl font-mono font-semibold text-white">{aiTotalSignals}</div>
+              <div className="bg-white/[0.02] backdrop-blur-xl border border-white/[0.06] rounded-2xl p-4 sm:p-5">
+                <div className="text-[10px] text-gray-500 uppercase tracking-widest mb-2">Total</div>
+                <div className="text-2xl sm:text-3xl font-mono font-semibold text-white">{aiTotalSignals}</div>
               </div>
-              <div className="bg-white/[0.02] backdrop-blur-xl border border-white/[0.06] rounded-2xl p-5">
+              <div className="bg-white/[0.02] backdrop-blur-xl border border-white/[0.06] rounded-2xl p-4 sm:p-5">
                 <div className="text-[10px] text-green-400/70 uppercase tracking-widest mb-2">Won</div>
-                <div className="text-3xl font-mono font-semibold text-green-400">{aiWins}</div>
+                <div className="text-2xl sm:text-3xl font-mono font-semibold text-green-400">{aiWins}</div>
               </div>
-              <div className="bg-white/[0.02] backdrop-blur-xl border border-white/[0.06] rounded-2xl p-5">
+              <div className="bg-white/[0.02] backdrop-blur-xl border border-white/[0.06] rounded-2xl p-4 sm:p-5">
                 <div className="text-[10px] text-red-400/70 uppercase tracking-widest mb-2">Lost</div>
-                <div className="text-3xl font-mono font-semibold text-red-400">{aiLosses}</div>
+                <div className="text-2xl sm:text-3xl font-mono font-semibold text-red-400">{aiLosses}</div>
               </div>
-              <div className="bg-white/[0.02] backdrop-blur-xl border border-white/[0.06] rounded-2xl p-5">
+              <div className="bg-white/[0.02] backdrop-blur-xl border border-white/[0.06] rounded-2xl p-4 sm:p-5">
                 <div className="text-[10px] text-gray-500 uppercase tracking-widest mb-2">Pending</div>
-                <div className="text-3xl font-mono font-semibold text-gray-400">{aiPending}</div>
+                <div className="text-2xl sm:text-3xl font-mono font-semibold text-gray-400">{aiPending}</div>
               </div>
-              <div className="bg-gradient-to-br from-[#FF6600]/20 to-[#FF6600]/5 backdrop-blur-xl border border-[#FF6600]/30 rounded-2xl p-5">
+              <div className="bg-gradient-to-br from-[#FF6600]/20 to-[#FF6600]/5 backdrop-blur-xl border border-[#FF6600]/30 rounded-2xl p-4 sm:p-5 col-span-2 md:col-span-1">
                 <div className="text-[10px] text-[#FF6600] uppercase tracking-widest mb-2 font-medium">Accuracy</div>
-                <div className="text-3xl font-mono font-semibold text-[#FF6600]">{aiWinRate}%</div>
+                <div className="text-2xl sm:text-3xl font-mono font-semibold text-[#FF6600]">{aiWinRate}%</div>
               </div>
             </div>
 
@@ -862,7 +779,7 @@ export default function Dashboard() {
             )}
 
             {dailySignals.length > 0 && (
-              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
                 {dailySignals.map((sig, i) => {
                   let rr = "-";
                   const parseNum = (str: string) => parseFloat(String(str).split('-')[0].replace(/[^0-9.]/g, ''));
@@ -875,11 +792,8 @@ export default function Dashboard() {
                         <div className={`absolute top-4 right-4 px-2.5 py-1 text-[9px] font-bold rounded-full ${
                           sig.status === 'win' ? 'bg-green-500/20 text-green-400 border border-green-500/30' : 
                           'bg-red-500/20 text-red-400 border border-red-500/30'
-                        }`}>
-                          {sig.status.toUpperCase()}
-                        </div>
+                        }`}>{sig.status.toUpperCase()}</div>
                       )}
-                      
                       <div className="p-6 border-b border-white/5">
                         <div className="flex items-center gap-2 mb-2">
                           <span className={`w-2 h-2 rounded-full ${sig.direction === 'buy' ? 'bg-green-500' : 'bg-red-500'}`}></span>
@@ -890,7 +804,6 @@ export default function Dashboard() {
                         <div className="text-xl font-bold text-white">{sig.pair}</div>
                         <div className="text-[10px] text-gray-500 mt-0.5">{sig.timeframe}</div>
                       </div>
-
                       <div className="p-5 space-y-2.5 text-xs font-mono">
                         <div className="flex justify-between"><span className="text-gray-500">Entry</span><span className="text-white font-semibold">{sig.entry_zone}</span></div>
                         <div className="flex justify-between"><span className="text-gray-500">SL</span><span className="text-red-400 font-semibold">{sig.stop_loss}</span></div>
@@ -900,7 +813,6 @@ export default function Dashboard() {
                           <span className="text-[#FF6600] font-semibold">{rr}</span>
                         </div>
                       </div>
-
                       <div className="p-4 bg-white/[0.01] border-t border-white/5">
                         <p className="text-[10px] text-gray-500 italic leading-relaxed line-clamp-2">"{sig.rationale}"</p>
                       </div>
@@ -916,28 +828,26 @@ export default function Dashboard() {
           <div className="animate-in fade-in slide-in-from-bottom-2 duration-500">
             <div className="mb-8">
               <h2 className="text-2xl font-bold text-white tracking-tight">Historical Archive</h2>
-              <p className="text-xs text-gray-500 mt-1">Past economic events and their outcomes</p>
+              <p className="text-xs text-gray-500 mt-1">Past economic events</p>
             </div>
             <div className="bg-white/[0.02] backdrop-blur-xl border border-white/[0.06] rounded-3xl overflow-hidden">
               <div className="overflow-x-auto">
                 <table className="w-full text-left text-xs whitespace-nowrap">
                   <thead className="bg-white/[0.02] text-gray-500 text-[10px] uppercase tracking-widest border-b border-white/5">
                     <tr>
-                      <th className="px-6 py-4 font-medium">Date</th>
-                      <th className="px-6 py-4 font-medium">Currency</th>
-                      <th className="px-6 py-4 font-medium">Event</th>
-                      <th className="px-6 py-4 text-center font-medium">Actual</th>
+                      <th className="px-4 sm:px-6 py-4 font-medium">Date</th>
+                      <th className="px-4 sm:px-6 py-4 font-medium">Cur</th>
+                      <th className="px-4 sm:px-6 py-4 font-medium">Event</th>
+                      <th className="px-4 sm:px-6 py-4 text-center font-medium">Actual</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-white/5">
                     {pastEvents.map((ev, i) => (
                       <tr key={i} className="hover:bg-white/[0.02] transition-colors">
-                        <td className="px-6 py-4 text-gray-400 font-mono">{formatDateWIB(ev.date)}</td>
-                        <td className="px-6 py-4">
-                          <span className="px-2 py-1 rounded-md bg-[#FF6600]/10 text-[#FF6600] font-semibold text-[10px]">{ev.country}</span>
-                        </td>
-                        <td className="px-6 py-4 text-gray-300">{ev.title}</td>
-                        <td className="px-6 py-4 text-center text-white font-mono font-semibold">{ev.actual || '—'}</td>
+                        <td className="px-4 sm:px-6 py-4 text-gray-400 font-mono">{formatDateWIB(ev.date)}</td>
+                        <td className="px-4 sm:px-6 py-4"><span className="px-2 py-1 rounded-md bg-[#FF6600]/10 text-[#FF6600] font-semibold text-[10px]">{ev.country}</span></td>
+                        <td className="px-4 sm:px-6 py-4 text-gray-300">{ev.title}</td>
+                        <td className="px-4 sm:px-6 py-4 text-center text-white font-mono font-semibold">{ev.actual || '—'}</td>
                       </tr>
                     ))}
                     {pastEvents.length === 0 && (
@@ -954,61 +864,57 @@ export default function Dashboard() {
           <div className="animate-in fade-in slide-in-from-bottom-2 duration-500">
             <div className="mb-8">
               <h2 className="text-2xl font-bold text-white tracking-tight">Trade Journal</h2>
-              <p className="text-xs text-gray-500 mt-1">Your personal execution ledger</p>
+              <p className="text-xs text-gray-500 mt-1">Execution ledger</p>
             </div>
-
             <div className="grid grid-cols-2 md:grid-cols-4 gap-3 lg:gap-4 mb-8">
-              <div className="bg-white/[0.02] backdrop-blur-xl border border-white/[0.06] rounded-2xl p-6">
-                <div className="text-[10px] text-gray-500 uppercase tracking-widest mb-2">Total Trades</div>
-                <div className="text-3xl font-mono font-semibold text-white">{totalTrades}</div>
+              <div className="bg-white/[0.02] backdrop-blur-xl border border-white/[0.06] rounded-2xl p-4 sm:p-6">
+                <div className="text-[10px] text-gray-500 uppercase tracking-widest mb-2">Trades</div>
+                <div className="text-2xl sm:text-3xl font-mono font-semibold text-white">{totalTrades}</div>
               </div>
-              <div className="bg-white/[0.02] backdrop-blur-xl border border-white/[0.06] rounded-2xl p-6">
+              <div className="bg-white/[0.02] backdrop-blur-xl border border-white/[0.06] rounded-2xl p-4 sm:p-6">
                 <div className="text-[10px] text-gray-500 uppercase tracking-widest mb-2">Win Rate</div>
-                <div className={`text-3xl font-mono font-semibold ${Number(winRate) >= 50 ? 'text-green-400' : 'text-red-400'}`}>{winRate}%</div>
+                <div className={`text-2xl sm:text-3xl font-mono font-semibold ${Number(winRate) >= 50 ? 'text-green-400' : 'text-red-400'}`}>{winRate}%</div>
               </div>
-              <div className="bg-white/[0.02] backdrop-blur-xl border border-white/[0.06] rounded-2xl p-6">
+              <div className="bg-white/[0.02] backdrop-blur-xl border border-white/[0.06] rounded-2xl p-4 sm:p-6">
                 <div className="text-[10px] text-gray-500 uppercase tracking-widest mb-2">Net Pips</div>
-                <div className={`text-3xl font-mono font-semibold ${totalPips >= 0 ? 'text-green-400' : 'text-red-400'}`}>{totalPips > 0 ? '+' : ''}{totalPips}</div>
+                <div className={`text-2xl sm:text-3xl font-mono font-semibold ${totalPips >= 0 ? 'text-green-400' : 'text-red-400'}`}>{totalPips > 0 ? '+' : ''}{totalPips}</div>
               </div>
-              <div className="bg-white/[0.02] backdrop-blur-xl border border-white/[0.06] rounded-2xl p-6">
+              <div className="bg-white/[0.02] backdrop-blur-xl border border-white/[0.06] rounded-2xl p-4 sm:p-6">
                 <div className="text-[10px] text-gray-500 uppercase tracking-widest mb-2">W / L</div>
-                <div className="text-3xl font-mono font-semibold text-white">{wins}/{losses}</div>
+                <div className="text-2xl sm:text-3xl font-mono font-semibold text-white">{wins}/{losses}</div>
               </div>
             </div>
-
             <div className="bg-white/[0.02] backdrop-blur-xl border border-white/[0.06] rounded-3xl overflow-hidden">
-              <div className="p-6 border-b border-white/5 flex justify-between items-center">
-                <h3 className="text-sm font-semibold text-white">Execution Ledger</h3>
+              <div className="p-5 sm:p-6 border-b border-white/5 flex justify-between items-center">
+                <h3 className="text-sm font-semibold text-white">Ledger</h3>
                 <input type="month" value={filterMonth} onChange={(e) => setFilterMonth(e.target.value)} className="bg-white/5 border border-white/10 text-white text-xs px-3 py-2 rounded-lg outline-none focus:border-[#FF6600]/50 transition-all" />
               </div>
               <div className="overflow-x-auto">
                 <table className="w-full text-left text-xs whitespace-nowrap">
                   <thead className="bg-white/[0.02] text-gray-500 text-[10px] uppercase tracking-widest border-b border-white/5">
                     <tr>
-                      <th className="px-6 py-4 font-medium">Date</th>
-                      <th className="px-6 py-4 font-medium">Pair</th>
-                      <th className="px-6 py-4 font-medium">Result</th>
-                      <th className="px-6 py-4 text-right font-medium">Pips</th>
+                      <th className="px-4 sm:px-6 py-4 font-medium">Date</th>
+                      <th className="px-4 sm:px-6 py-4 font-medium">Pair</th>
+                      <th className="px-4 sm:px-6 py-4 font-medium">Result</th>
+                      <th className="px-4 sm:px-6 py-4 text-right font-medium">Pips</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-white/5">
                     {filteredJournal.map((trade, i) => (
                       <tr key={i} className="hover:bg-white/[0.02] transition-colors">
-                        <td className="px-6 py-4 text-gray-400 font-mono">{new Date(trade.closed_at).toLocaleDateString('id-ID')}</td>
-                        <td className="px-6 py-4 font-semibold text-white">{trade.pair}</td>
-                        <td className="px-6 py-4">
+                        <td className="px-4 sm:px-6 py-4 text-gray-400 font-mono">{new Date(trade.closed_at).toLocaleDateString('id-ID')}</td>
+                        <td className="px-4 sm:px-6 py-4 font-semibold text-white">{trade.pair}</td>
+                        <td className="px-4 sm:px-6 py-4">
                           <span className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[10px] font-bold ${trade.result === 'win' ? 'bg-green-500/10 text-green-400' : 'bg-red-500/10 text-red-400'}`}>
                             <span className={`w-1 h-1 rounded-full ${trade.result === 'win' ? 'bg-green-400' : 'bg-red-400'}`}></span>
                             {trade.result.toUpperCase()}
                           </span>
                         </td>
-                        <td className={`px-6 py-4 text-right font-mono font-semibold ${trade.pips > 0 ? 'text-green-400' : 'text-red-400'}`}>
-                          {trade.pips > 0 ? '+' : ''}{trade.pips}
-                        </td>
+                        <td className={`px-4 sm:px-6 py-4 text-right font-mono font-semibold ${trade.pips > 0 ? 'text-green-400' : 'text-red-400'}`}>{trade.pips > 0 ? '+' : ''}{trade.pips}</td>
                       </tr>
                     ))}
                     {filteredJournal.length === 0 && (
-                      <tr><td colSpan={4} className="text-center py-12 text-gray-600 text-sm">No trades recorded.</td></tr>
+                      <tr><td colSpan={4} className="text-center py-12 text-gray-600 text-sm">No trades.</td></tr>
                     )}
                   </tbody>
                 </table>
@@ -1020,14 +926,13 @@ export default function Dashboard() {
         {activeTab === 'calculator' && (
           <div className="animate-in fade-in slide-in-from-bottom-2 duration-500">
             <div className="mb-8">
-              <h2 className="text-2xl font-bold text-white tracking-tight">Risk Management</h2>
-              <p className="text-xs text-gray-500 mt-1">Position sizing calculator</p>
+              <h2 className="text-2xl font-bold text-white tracking-tight">Risk</h2>
+              <p className="text-xs text-gray-500 mt-1">Position sizing</p>
             </div>
-
             <div className="max-w-4xl mx-auto grid grid-cols-1 md:grid-cols-2 gap-4 lg:gap-6">
-              <div className="bg-white/[0.02] backdrop-blur-xl border border-white/[0.06] rounded-3xl p-6 lg:p-8 space-y-5">
+              <div className="bg-white/[0.02] backdrop-blur-xl border border-white/[0.06] rounded-3xl p-5 sm:p-8 space-y-5">
                 <div>
-                  <label className="block text-[10px] text-gray-500 font-medium mb-2 uppercase tracking-widest">Account Balance</label>
+                  <label className="block text-[10px] text-gray-500 font-medium mb-2 uppercase tracking-widest">Balance</label>
                   <div className="relative">
                     <span className="absolute left-4 top-1/2 -translate-y-1/2 text-gray-500 text-sm">$</span>
                     <input type="number" value={calcBalance} onChange={(e) => setCalcBalance(Number(e.target.value))} className="w-full bg-white/5 border border-white/10 rounded-xl text-white pl-8 pr-4 py-3 text-lg font-mono outline-none focus:border-[#FF6600]/50 transition-all" />
@@ -1042,7 +947,7 @@ export default function Dashboard() {
                     </div>
                   </div>
                   <div>
-                    <label className="block text-[10px] text-gray-500 font-medium mb-2 uppercase tracking-widest">Stop Loss</label>
+                    <label className="block text-[10px] text-gray-500 font-medium mb-2 uppercase tracking-widest">SL</label>
                     <div className="relative">
                       <input type="number" value={calcSl} onChange={(e) => setCalcSl(Number(e.target.value))} className="w-full bg-white/5 border border-white/10 rounded-xl text-white px-4 py-3 text-lg font-mono outline-none focus:border-[#FF6600]/50 transition-all" />
                       <span className="absolute right-4 top-1/2 -translate-y-1/2 text-gray-500 text-xs">pips</span>
@@ -1050,16 +955,15 @@ export default function Dashboard() {
                   </div>
                 </div>
               </div>
-
-              <div className="bg-gradient-to-br from-[#FF6600]/10 via-white/[0.02] to-transparent backdrop-blur-xl border border-[#FF6600]/20 rounded-3xl p-6 lg:p-8 flex flex-col justify-center">
+              <div className="bg-gradient-to-br from-[#FF6600]/10 via-white/[0.02] to-transparent backdrop-blur-xl border border-[#FF6600]/20 rounded-3xl p-5 sm:p-8 flex flex-col justify-center">
                 <div className="text-center mb-6">
                   <div className="text-[10px] text-gray-500 font-medium uppercase tracking-widest mb-2">Risk Amount</div>
-                  <div className="text-4xl font-mono font-bold text-red-400">${riskAmountUSD.toFixed(2)}</div>
+                  <div className="text-3xl sm:text-4xl font-mono font-bold text-red-400">${riskAmountUSD.toFixed(2)}</div>
                 </div>
                 <div className="w-full h-px bg-white/10 mb-6"></div>
                 <div className="text-center">
                   <div className="text-[10px] text-[#FF6600] font-medium uppercase tracking-widest mb-2">Position Size</div>
-                  <div className="text-5xl font-mono font-bold text-[#FF6600] mb-1">{lotSizeStandard.toFixed(2)}</div>
+                  <div className="text-4xl sm:text-5xl font-mono font-bold text-[#FF6600] mb-1">{lotSizeStandard.toFixed(2)}</div>
                   <div className="text-[10px] text-gray-500 uppercase tracking-widest">Standard Lots</div>
                 </div>
               </div>
@@ -1068,11 +972,23 @@ export default function Dashboard() {
         )}
       </main>
 
-      <nav className="lg:hidden fixed bottom-4 left-4 right-4 z-40">
-        <div className="bg-[#09090B]/90 backdrop-blur-2xl border border-white/10 rounded-2xl flex justify-around items-center h-16 shadow-2xl">
+      {/* MOBILE NAV WITH ICONS */}
+      <nav className="lg:hidden fixed bottom-3 left-3 right-3 z-40">
+        <div className="bg-[#09090B]/95 backdrop-blur-2xl border border-white/10 rounded-2xl flex justify-around items-center h-[68px] shadow-2xl px-1">
           {navTabs.map((tab) => (
-            <button key={tab.id} onClick={() => setActiveTab(tab.id as any)} className={`flex flex-col items-center justify-center gap-1 w-full h-full rounded-xl mx-1 transition-all ${activeTab === tab.id ? 'text-[#FF6600] bg-[#FF6600]/10' : 'text-gray-500'}`}>
-              <span className="text-[10px] font-medium">{tab.label}</span>
+            <button 
+              key={tab.id} 
+              onClick={() => setActiveTab(tab.id as any)} 
+              className={`flex flex-col items-center justify-center gap-0.5 w-full h-full rounded-xl transition-all ${
+                activeTab === tab.id 
+                  ? 'text-[#FF6600] bg-[#FF6600]/10' 
+                  : 'text-gray-500 active:scale-95'
+              }`}
+            >
+              <div className={`${activeTab === tab.id ? 'scale-110' : ''} transition-transform`}>
+                {tab.icon}
+              </div>
+              <span className="text-[9px] font-semibold tracking-wide">{tab.label}</span>
             </button>
           ))}
         </div>
@@ -1097,7 +1013,7 @@ export default function Dashboard() {
             <div className="p-6">
               <form onSubmit={handleAnalyze} className="space-y-4">
                 <div>
-                  <label className="block text-[10px] text-gray-500 uppercase tracking-widest mb-2 font-medium">Select Pair</label>
+                  <label className="block text-[10px] text-gray-500 uppercase tracking-widest mb-2 font-medium">Pair</label>
                   <select value={selectedPair} onChange={(e) => setSelectedPair(e.target.value)} className="w-full bg-white/5 border border-white/10 text-white p-3 rounded-xl text-sm font-mono outline-none focus:border-[#FF6600]/50 transition-all">
                     <option value="EUR/USD">EUR/USD</option>
                     <option value="XAU/USD">XAU/USD</option>
@@ -1122,7 +1038,7 @@ export default function Dashboard() {
         <div className="lg:hidden fixed inset-0 bg-black/90 backdrop-blur-md z-50 overflow-y-auto p-4 flex flex-col">
           <div className="bg-[#09090B] border border-white/10 rounded-3xl w-full max-w-sm mx-auto my-auto shadow-2xl overflow-hidden animate-in zoom-in-95 duration-300">
             <div className="p-5 border-b border-white/5 flex justify-between items-center">
-              <h3 className="text-sm font-semibold text-white">Signal Result</h3>
+              <h3 className="text-sm font-semibold text-white">Signal</h3>
               <button onClick={() => { setAnalysis(null); setSelectedEvent(null); }} className="w-8 h-8 rounded-full bg-white/5 hover:bg-white/10 flex items-center justify-center transition-all">
                 <svg className="w-4 h-4 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
@@ -1141,18 +1057,17 @@ export default function Dashboard() {
                 </div>
                 <div className="text-[10px] text-white/40 font-mono mt-2">Live: {analysis.current_price}</div>
               </div>
-              
               <div className="space-y-1">
                 <div className="flex justify-between items-center py-2 border-b border-white/5">
                   <span className="text-[10px] text-gray-500 uppercase tracking-wider">Entry</span>
                   <span className="text-sm font-mono font-semibold text-white">{analysis.entry_zone}</span>
                 </div>
                 <div className="flex justify-between items-center py-2 border-b border-white/5">
-                  <span className="text-[10px] text-red-400/70 uppercase tracking-wider">Stop Loss</span>
+                  <span className="text-[10px] text-red-400/70 uppercase tracking-wider">SL</span>
                   <span className="text-sm font-mono font-semibold text-red-400">{analysis.stop_loss}</span>
                 </div>
                 <div className="flex justify-between items-center py-2 border-b border-white/5">
-                  <span className="text-[10px] text-green-400/70 uppercase tracking-wider">Take Profit</span>
+                  <span className="text-[10px] text-green-400/70 uppercase tracking-wider">TP</span>
                   <span className="text-sm font-mono font-semibold text-green-400">{analysis.take_profit}</span>
                 </div>
                 <div className="flex justify-between items-center py-2">
@@ -1160,7 +1075,6 @@ export default function Dashboard() {
                   <span className="text-sm font-mono font-semibold text-[#FF6600]">1:{rrRatio}</span>
                 </div>
               </div>
-
               <div className="grid grid-cols-2 gap-2 pt-2">
                 <button onClick={() => saveTradeToJournal('win')} className="bg-green-500/10 hover:bg-green-500 text-green-400 hover:text-black border border-green-500/30 py-3 rounded-xl text-xs font-semibold transition-all">WIN</button>
                 <button onClick={() => saveTradeToJournal('loss')} className="bg-red-500/10 hover:bg-red-500 text-red-400 hover:text-black border border-red-500/30 py-3 rounded-xl text-xs font-semibold transition-all">LOSS</button>
