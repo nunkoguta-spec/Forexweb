@@ -17,7 +17,7 @@ export default function Dashboard() {
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [selectedEvent, setSelectedEvent] = useState<any>(null);
   const [analysis, setAnalysis] = useState<any>(null);
-  const [selectedPair, setSelectedPair] = useState<string>('XAU/USD'); // State untuk melacak pair di modal
+  const [selectedPair, setSelectedPair] = useState<string>('XAU/USD');
   
   // State Jurnal & Filter
   const [isSavingTrade, setIsSavingTrade] = useState(false);
@@ -142,7 +142,7 @@ export default function Dashboard() {
     const currentPrice = marketData?.[selectedPair]?.price;
 
     if (!currentPrice || currentPrice === '...') {
-       alert("Harga Live tidak tersedia. Pastikan API Key Twelve Data sudah benar di Vercel.");
+       alert("Harga Live tidak tersedia. Pastikan API Key Twelve Data sudah benar.");
        setIsAnalyzing(false);
        return;
     }
@@ -152,11 +152,7 @@ export default function Dashboard() {
         method: 'POST',
         body: JSON.stringify({ 
           event: selectedEvent, 
-          marketContext: { 
-            pair: selectedPair, 
-            current_price: currentPrice, 
-            trend: "Unknown" 
-          } 
+          marketContext: { pair: selectedPair, current_price: currentPrice, trend: "Unknown" } 
         }),
       });
       const data = await res.json();
@@ -208,33 +204,30 @@ export default function Dashboard() {
   const lotSizeStandard = riskAmountUSD / (Number(calcSl) * 10);
   const highImpactToday = filteredByDate.filter(e => e.impact === 'High').length;
 
-  // Kalkulasi RR
   let rrRatio = "0";
   if (analysis && analysis.direction !== 'no_trade' && analysis.entry_zone && analysis.stop_loss && analysis.take_profit) {
     const parseNum = (str: string) => parseFloat(String(str).split('-')[0].replace(/[^0-9.]/g, ''));
     const entry = parseNum(analysis.entry_zone);
     const sl = parseNum(analysis.stop_loss);
     const tp = parseNum(analysis.take_profit);
-    
     if (!isNaN(entry) && !isNaN(sl) && !isNaN(tp) && entry !== sl) {
-      const risk = Math.abs(entry - sl);
-      const reward = Math.abs(tp - entry);
-      rrRatio = (reward / risk).toFixed(1);
+      rrRatio = (Math.abs(tp - entry) / Math.abs(entry - sl)).toFixed(1);
     }
   }
 
   return (
-    <div className="min-h-screen flex flex-col bg-[#050505] font-sans selection:bg-[#D4AF37]/30 pb-10">
+    <div className="min-h-screen flex flex-col bg-[#050505] font-sans selection:bg-[#D4AF37]/30 pb-20 lg:pb-10">
       
-      {/* HEADER */}
-      <header className="border-b border-white/5 bg-[#050505]/80 backdrop-blur-2xl sticky top-0 z-40">
-        <div className="max-w-[1500px] mx-auto px-6 h-20 flex items-center justify-between">
-          <div className="flex items-center gap-10">
-            <div className="flex items-center gap-3">
-              <div className="w-8 h-8 rounded-full border border-[#D4AF37]/50 flex items-center justify-center font-serif text-sm text-[#D4AF37]">F</div>
-              <span className="text-lg font-serif text-white tracking-[0.2em] uppercase hidden sm:block">Forex Intel</span>
+      {/* HEADER - RESPONSIVE */}
+      <header className="border-b border-white/5 bg-[#050505]/90 backdrop-blur-2xl sticky top-0 z-40">
+        <div className="max-w-[1500px] mx-auto px-4 lg:px-6 h-16 lg:h-20 flex items-center justify-between">
+          <div className="flex items-center gap-6 lg:gap-10">
+            <div className="flex items-center gap-2 lg:gap-3">
+              <div className="w-7 h-7 lg:w-8 lg:h-8 rounded-full border border-[#D4AF37]/50 flex items-center justify-center font-serif text-xs lg:text-sm text-[#D4AF37]">F</div>
+              <span className="text-sm lg:text-lg font-serif text-white tracking-[0.2em] uppercase">Forex Intel</span>
             </div>
             
+            {/* NAVIGASI DESKTOP */}
             <nav className="hidden lg:flex gap-1">
               {['calendar', 'history', 'performance', 'calculator'].map((tab) => (
                 <button
@@ -252,34 +245,32 @@ export default function Dashboard() {
             </nav>
           </div>
 
-          <div className="flex items-center gap-6">
-            <div className="hidden sm:flex flex-col items-end border-r border-white/10 pr-6">
-              <span className="text-[10px] text-gray-500 uppercase tracking-[0.2em] mb-1">Local Time</span>
-              <span className="text-sm font-mono text-white">{currentTime}</span>
+          <div className="flex items-center gap-4 lg:gap-6">
+            <div className="hidden sm:flex flex-col items-end border-r border-white/10 pr-4 lg:pr-6">
+              <span className="text-[9px] lg:text-[10px] text-gray-500 uppercase tracking-[0.2em] mb-0.5 lg:mb-1">Waktu Server</span>
+              <span className="text-xs lg:text-sm font-mono text-white">{currentTime}</span>
             </div>
-            <div className="flex gap-6">
-              <div className="flex flex-col items-end">
-                <span className="text-[10px] text-gray-500 uppercase tracking-[0.2em] mb-1">Gold</span>
-                <strong className="text-lg font-mono text-white tracking-tight">{marketData?.['XAU/USD']?.price || '...'}</strong>
-              </div>
+            <div className="flex flex-col items-end">
+              <span className="text-[9px] lg:text-[10px] text-gray-500 uppercase tracking-[0.2em] mb-0.5 lg:mb-1">Gold</span>
+              <strong className="text-sm lg:text-lg font-mono text-[#D4AF37] lg:text-white tracking-tight">{marketData?.['XAU/USD']?.price || '...'}</strong>
             </div>
           </div>
         </div>
       </header>
 
-      {/* DAILY BRIEFING & COUNTDOWN */}
+      {/* DAILY BRIEFING */}
       <div className="bg-[#D4AF37]/5 border-b border-[#D4AF37]/10">
-        <div className="max-w-[1500px] mx-auto px-6 py-3 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
-          <div className="flex items-center gap-4 text-xs tracking-wider text-gray-400">
-            <span className="bg-[#D4AF37]/20 text-[#D4AF37] px-3 py-1 rounded-full uppercase font-bold">Daily Briefing</span>
-            <span>Ada <strong className="text-white">{highImpactToday} berita High Impact</strong> untuk tanggal ini.</span>
+        <div className="max-w-[1500px] mx-auto px-4 lg:px-6 py-2 lg:py-3 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-2 lg:gap-4">
+          <div className="flex items-center gap-2 lg:gap-4 text-[10px] lg:text-xs tracking-wider text-gray-400">
+            <span className="bg-[#D4AF37]/20 text-[#D4AF37] px-2 lg:px-3 py-1 rounded-full uppercase font-bold">Briefing</span>
+            <span><strong className="text-white">{highImpactToday} High Impact</strong> hari ini.</span>
           </div>
           
           {nextHighImpact && (
-            <div className="flex items-center gap-3">
-              <span className="text-xs text-gray-400 uppercase tracking-widest">Next Catalyst:</span>
-              <span className="text-xs text-white font-bold">{nextHighImpact.title}</span>
-              <div className="font-mono text-sm text-[#D4AF37] tracking-widest bg-[#D4AF37]/10 px-3 py-1 rounded-lg">
+            <div className="flex items-center gap-2 lg:gap-3 w-full sm:w-auto justify-between sm:justify-end">
+              <span className="text-[10px] lg:text-xs text-gray-400 uppercase tracking-widest hidden sm:block">Next:</span>
+              <span className="text-[10px] lg:text-xs text-white font-bold truncate max-w-[150px]">{nextHighImpact.title}</span>
+              <div className="font-mono text-xs lg:text-sm text-[#D4AF37] tracking-widest bg-[#D4AF37]/10 px-2 lg:px-3 py-1 rounded-lg">
                 T-MINUS {countdown}
               </div>
             </div>
@@ -287,47 +278,48 @@ export default function Dashboard() {
         </div>
       </div>
 
-      <main className="flex-1 max-w-[1500px] w-full mx-auto px-6 py-8">
+      <main className="flex-1 max-w-[1500px] w-full mx-auto px-4 lg:px-6 py-4 lg:py-8">
         {errorMessage && (
-          <div className="mb-6 p-4 bg-red-900/10 border border-red-500/20 rounded-xl text-red-400 text-sm">
+          <div className="mb-4 lg:mb-6 p-3 lg:p-4 bg-red-900/10 border border-red-500/20 rounded-xl text-red-400 text-xs lg:text-sm">
             {errorMessage}
           </div>
         )}
 
         {/* TAB 1: TERMINAL */}
         {activeTab === 'calendar' && (
-          <div className="grid grid-cols-1 xl:grid-cols-12 gap-8 animate-in fade-in duration-500">
+          <div className="grid grid-cols-1 xl:grid-cols-12 gap-6 lg:gap-8 animate-in fade-in duration-500">
             
-            <div className="xl:col-span-8 flex flex-col gap-8">
-              {/* CHART */}
+            <div className="xl:col-span-8 flex flex-col gap-6 lg:gap-8">
+              {/* CHART (Lebih kecil di HP) */}
               <div className="bg-[#0a0a0a] border border-white/5 rounded-2xl overflow-hidden shadow-2xl relative">
-                <div className="absolute top-4 left-6 z-10 pointer-events-none">
-                  <h2 className="text-sm font-serif text-white tracking-widest uppercase">XAU/USD Live</h2>
+                <div className="absolute top-3 lg:top-4 left-4 lg:left-6 z-10 pointer-events-none">
+                  <h2 className="text-xs lg:text-sm font-serif text-white tracking-widest uppercase">XAU/USD Live</h2>
                 </div>
-                <div id="tradingview_chart" ref={chartContainerRef} className="w-full h-[350px]" />
+                <div id="tradingview_chart" ref={chartContainerRef} className="w-full h-[250px] lg:h-[350px]" />
               </div>
 
               {/* JADWAL & FOCUS MODE */}
               <div className="bg-[#0a0a0a] border border-white/5 rounded-2xl overflow-hidden shadow-2xl">
-                <div className="p-5 border-b border-white/5 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
+                <div className="p-4 lg:p-5 border-b border-white/5 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3 lg:gap-4">
                   <div>
-                    <h2 className="text-base font-serif text-white tracking-widest uppercase">Economic Catalyst</h2>
-                    <div className="flex items-center gap-2 mt-2">
-                      <button onClick={() => setDateFilter('yesterday')} className={`px-3 py-1 text-[10px] uppercase font-bold rounded ${dateFilter === 'yesterday' ? 'bg-[#D4AF37]/20 text-[#D4AF37]' : 'text-gray-500'}`}>Yesterday</button>
-                      <button onClick={() => setDateFilter('today')} className={`px-3 py-1 text-[10px] uppercase font-bold rounded ${dateFilter === 'today' ? 'bg-[#D4AF37]/20 text-[#D4AF37]' : 'text-gray-500'}`}>Today</button>
-                      <button onClick={() => setDateFilter('tomorrow')} className={`px-3 py-1 text-[10px] uppercase font-bold rounded ${dateFilter === 'tomorrow' ? 'bg-[#D4AF37]/20 text-[#D4AF37]' : 'text-gray-500'}`}>Tomorrow</button>
+                    <h2 className="text-sm lg:text-base font-serif text-white tracking-widest uppercase">Economic Catalyst</h2>
+                    <div className="flex items-center gap-1.5 lg:gap-2 mt-2">
+                      <button onClick={() => setDateFilter('yesterday')} className={`px-2 lg:px-3 py-1 text-[9px] lg:text-[10px] uppercase font-bold rounded ${dateFilter === 'yesterday' ? 'bg-[#D4AF37]/20 text-[#D4AF37]' : 'text-gray-500'}`}>Yesterday</button>
+                      <button onClick={() => setDateFilter('today')} className={`px-2 lg:px-3 py-1 text-[9px] lg:text-[10px] uppercase font-bold rounded ${dateFilter === 'today' ? 'bg-[#D4AF37]/20 text-[#D4AF37]' : 'text-gray-500'}`}>Today</button>
+                      <button onClick={() => setDateFilter('tomorrow')} className={`px-2 lg:px-3 py-1 text-[9px] lg:text-[10px] uppercase font-bold rounded ${dateFilter === 'tomorrow' ? 'bg-[#D4AF37]/20 text-[#D4AF37]' : 'text-gray-500'}`}>Tomorrow</button>
                     </div>
                   </div>
                   
-                  <div className="flex items-center gap-3 bg-[#111] px-4 py-2 rounded-xl border border-white/5 cursor-pointer" onClick={() => setFocusMode(!focusMode)}>
-                    <div className={`w-8 h-4 rounded-full relative transition-colors ${focusMode ? 'bg-[#D4AF37]' : 'bg-gray-700'}`}>
-                      <div className={`absolute top-0.5 w-3 h-3 rounded-full bg-white transition-all ${focusMode ? 'left-4.5' : 'left-0.5'}`}></div>
+                  <div className="flex items-center gap-2 lg:gap-3 bg-[#111] px-3 lg:px-4 py-2 rounded-xl border border-white/5 cursor-pointer" onClick={() => setFocusMode(!focusMode)}>
+                    <div className={`w-7 lg:w-8 h-3.5 lg:h-4 rounded-full relative transition-colors ${focusMode ? 'bg-[#D4AF37]' : 'bg-gray-700'}`}>
+                      <div className={`absolute top-0.5 w-2.5 lg:w-3 h-2.5 lg:h-3 rounded-full bg-white transition-all ${focusMode ? 'left-3.5 lg:left-4.5' : 'left-0.5'}`}></div>
                     </div>
-                    <span className="text-[10px] uppercase tracking-widest text-gray-300">High Impact Only</span>
+                    <span className="text-[9px] lg:text-[10px] uppercase tracking-widest text-gray-300">High Impact Only</span>
                   </div>
                 </div>
 
-                <div className="overflow-x-auto max-h-[500px] custom-scrollbar">
+                {/* TAMPILAN DESKTOP (TABEL) */}
+                <div className="hidden md:block overflow-x-auto max-h-[500px] custom-scrollbar">
                   <table className="w-full text-left text-sm whitespace-nowrap">
                     <thead className="bg-[#050505] text-gray-500 text-[10px] uppercase tracking-[0.2em] sticky top-0 z-10 border-b border-white/5">
                       <tr>
@@ -356,11 +348,7 @@ export default function Dashboard() {
                           </td>
                           <td className="px-6 py-4 text-right">
                             <button 
-                              onClick={() => { 
-                                setSelectedEvent(ev); 
-                                setAnalysis(null); 
-                                setSelectedPair(ev.country === 'USD' ? 'XAU/USD' : 'EUR/USD'); // Auto select pair yang relevan
-                              }} 
+                              onClick={() => { setSelectedEvent(ev); setAnalysis(null); setSelectedPair(ev.country === 'USD' ? 'XAU/USD' : 'EUR/USD'); }} 
                               className="opacity-0 group-hover:opacity-100 border border-white/10 text-white hover:bg-[#D4AF37] hover:border-[#D4AF37] hover:text-black px-4 py-1.5 rounded-lg text-xs tracking-wider transition-all"
                             >
                               Analyze
@@ -371,11 +359,37 @@ export default function Dashboard() {
                     </tbody>
                   </table>
                 </div>
+
+                {/* TAMPILAN MOBILE (KARTU) */}
+                <div className="md:hidden flex flex-col divide-y divide-white/5 max-h-[500px] overflow-y-auto custom-scrollbar">
+                   {importantEvents.length === 0 && (
+                      <div className="text-center py-8 text-gray-600 text-sm">Tidak ada berita.</div>
+                   )}
+                   {importantEvents.map((ev, i) => (
+                      <div key={i} className="p-4 flex items-center justify-between hover:bg-white/[0.02]">
+                         <div className="flex flex-col gap-1">
+                            <div className="flex items-center gap-2">
+                               <span className={`w-1.5 h-1.5 rounded-full ${ev.impact === 'High' ? 'bg-red-500' : 'bg-amber-500'}`}></span>
+                               <span className="text-white text-xs font-bold">{ev.country}</span>
+                               <span className="text-gray-500 text-[10px] font-mono">{formatTimeWIB(ev.date)}</span>
+                            </div>
+                            <span className="text-gray-300 text-sm leading-tight pr-4">{ev.title}</span>
+                         </div>
+                         <button 
+                            onClick={() => { setSelectedEvent(ev); setAnalysis(null); setSelectedPair(ev.country === 'USD' ? 'XAU/USD' : 'EUR/USD'); }} 
+                            className="border border-white/10 text-[#D4AF37] px-3 py-1.5 rounded-lg text-[10px] tracking-wider uppercase shrink-0"
+                         >
+                            Analyze
+                         </button>
+                      </div>
+                   ))}
+                </div>
+
               </div>
             </div>
 
-            {/* KANAN: PANEL AI ORDER TICKET */}
-            <div className="xl:col-span-4 h-fit sticky top-32">
+            {/* KANAN: PANEL AI (Hanya muncul di Desktop) */}
+            <div className="hidden xl:block xl:col-span-4 h-fit sticky top-32">
               <div className="bg-[#0a0a0a] border border-white/5 rounded-2xl overflow-hidden shadow-2xl">
                 <div className="p-6 border-b border-white/5 bg-gradient-to-b from-[#D4AF37]/5 to-transparent">
                   <h2 className="text-base font-serif text-white tracking-widest uppercase">Execution Signal</h2>
@@ -430,13 +444,6 @@ export default function Dashboard() {
                           </ul>
                         )}
                       </div>
-
-                      {analysis.direction !== 'no_trade' && analysis.invalidation && (
-                        <div className="bg-red-500/5 border border-red-500/10 p-3 rounded-lg text-center">
-                           <p className="text-[9px] text-red-400 uppercase tracking-widest mb-1">Batal Jika</p>
-                           <p className="text-xs text-gray-300">{analysis.invalidation}</p>
-                        </div>
-                      )}
                       
                       <div className="pt-4 border-t border-white/5">
                         <div className="flex gap-3">
@@ -459,24 +466,24 @@ export default function Dashboard() {
         {/* TAB 2: ARSIP DATA */}
         {activeTab === 'history' && (
            <div className="bg-[#0a0a0a] border border-white/5 rounded-2xl overflow-hidden shadow-2xl animate-in fade-in duration-500">
-             <div className="p-6 border-b border-white/5"><h2 className="text-base font-serif text-white tracking-widest uppercase">Historical Archive</h2></div>
+             <div className="p-4 lg:p-6 border-b border-white/5"><h2 className="text-sm lg:text-base font-serif text-white tracking-widest uppercase">Historical Archive</h2></div>
              <div className="overflow-x-auto">
                <table className="w-full text-left text-sm whitespace-nowrap">
                  <thead className="bg-[#050505] text-gray-500 text-[10px] uppercase tracking-[0.2em]">
                    <tr>
-                     <th className="px-6 py-4 font-normal">Date</th>
-                     <th className="px-6 py-4 font-normal">Currency</th>
-                     <th className="px-6 py-4 font-normal">Event</th>
-                     <th className="px-6 py-4 font-normal text-center">Actual</th>
+                     <th className="px-4 lg:px-6 py-3 lg:py-4 font-normal">Date</th>
+                     <th className="px-4 lg:px-6 py-3 lg:py-4 font-normal">Currency</th>
+                     <th className="px-4 lg:px-6 py-3 lg:py-4 font-normal">Event</th>
+                     <th className="px-4 lg:px-6 py-3 lg:py-4 font-normal text-center">Actual</th>
                    </tr>
                  </thead>
                  <tbody className="divide-y divide-white/5">
                    {pastEvents.map((ev, i) => (
                      <tr key={i} className="hover:bg-white/[0.02]">
-                       <td className="px-6 py-4 text-gray-500 font-mono text-xs">{formatDateWIB(ev.date)} - {formatTimeWIB(ev.date)}</td>
-                       <td className="px-6 py-4 font-bold text-gray-400 text-xs">{ev.country}</td>
-                       <td className="px-6 py-4 text-gray-300 text-sm">{ev.title}</td>
-                       <td className="px-6 py-4 text-center font-bold font-mono text-[#D4AF37] text-sm">{ev.actual || 'Pending'}</td>
+                       <td className="px-4 lg:px-6 py-3 lg:py-4 text-gray-500 font-mono text-[10px] lg:text-xs">{formatDateWIB(ev.date)}</td>
+                       <td className="px-4 lg:px-6 py-3 lg:py-4 font-bold text-gray-400 text-[10px] lg:text-xs">{ev.country}</td>
+                       <td className="px-4 lg:px-6 py-3 lg:py-4 text-gray-300 text-xs lg:text-sm">{ev.title}</td>
+                       <td className="px-4 lg:px-6 py-3 lg:py-4 text-center font-bold font-mono text-[#D4AF37] text-xs lg:text-sm">{ev.actual || 'Pending'}</td>
                      </tr>
                    ))}
                  </tbody>
@@ -487,47 +494,45 @@ export default function Dashboard() {
 
         {/* TAB 3: JURNAL & PERFORMA */}
         {activeTab === 'performance' && (
-          <div className="space-y-6 animate-in fade-in duration-500">
-            <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+          <div className="space-y-4 lg:space-y-6 animate-in fade-in duration-500">
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-3 lg:gap-4">
               {[
                 { label: 'Total Trades', val: totalTrades, color: 'text-white' },
                 { label: 'Win Rate', val: `${winRate}%`, color: Number(winRate) >= 50 ? 'text-[#D4AF37]' : 'text-red-400' },
                 { label: 'Net Pips', val: `${totalPips > 0 ? '+' : ''}${totalPips}`, color: totalPips >= 0 ? 'text-[#D4AF37]' : 'text-red-400' },
                 { label: 'W / L', val: `${wins} / ${losses}`, color: 'text-white' },
               ].map((stat, idx) => (
-                <div key={idx} className="bg-[#0a0a0a] p-6 rounded-2xl border border-white/5 shadow-xl">
-                  <p className="text-[10px] text-gray-500 uppercase tracking-widest mb-2">{stat.label}</p>
-                  <p className={`text-3xl font-serif tracking-wider ${stat.color}`}>{stat.val}</p>
+                <div key={idx} className="bg-[#0a0a0a] p-4 lg:p-6 rounded-2xl border border-white/5 shadow-xl">
+                  <p className="text-[9px] lg:text-[10px] text-gray-500 uppercase tracking-widest mb-1 lg:mb-2">{stat.label}</p>
+                  <p className={`text-xl lg:text-3xl font-serif tracking-wider ${stat.color}`}>{stat.val}</p>
                 </div>
               ))}
             </div>
 
             <div className="bg-[#0a0a0a] border border-white/5 rounded-2xl overflow-hidden shadow-2xl">
-              <div className="p-6 border-b border-white/5 flex justify-between items-center">
-                <h2 className="text-base font-serif text-white tracking-widest uppercase">Execution Ledger</h2>
-                <input type="month" value={filterMonth} onChange={(e) => setFilterMonth(e.target.value)} className="bg-[#050505] text-gray-300 text-xs px-4 py-2 rounded-xl border border-white/5 outline-none focus:border-[#D4AF37]/50" />
+              <div className="p-4 lg:p-6 border-b border-white/5 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3">
+                <h2 className="text-sm lg:text-base font-serif text-white tracking-widest uppercase">Execution Ledger</h2>
+                <input type="month" value={filterMonth} onChange={(e) => setFilterMonth(e.target.value)} className="w-full sm:w-auto bg-[#050505] text-gray-300 text-xs px-3 py-2 rounded-xl border border-white/5 outline-none focus:border-[#D4AF37]/50" />
               </div>
               <div className="overflow-x-auto">
                 <table className="w-full text-left text-sm whitespace-nowrap">
                   <thead className="bg-[#050505] text-gray-500 text-[10px] uppercase tracking-[0.2em]">
                     <tr>
-                      <th className="px-6 py-4 font-normal">Date</th>
-                      <th className="px-6 py-4 font-normal">Pair</th>
-                      <th className="px-6 py-4 font-normal">Direction</th>
-                      <th className="px-6 py-4 font-normal">Result</th>
-                      <th className="px-6 py-4 font-normal text-right">Pips</th>
+                      <th className="px-4 lg:px-6 py-3 lg:py-4 font-normal">Date</th>
+                      <th className="px-4 lg:px-6 py-3 lg:py-4 font-normal">Pair</th>
+                      <th className="px-4 lg:px-6 py-3 lg:py-4 font-normal">Result</th>
+                      <th className="px-4 lg:px-6 py-3 lg:py-4 font-normal text-right">Pips</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-white/5">
                     {filteredJournal.map((trade, i) => (
                       <tr key={i} className="hover:bg-white/[0.02]">
-                        <td className="px-6 py-4 text-gray-500 font-mono text-xs">{new Date(trade.closed_at).toLocaleDateString('id-ID')}</td>
-                        <td className="px-6 py-4 font-bold text-white text-sm">{trade.pair}</td>
-                        <td className="px-6 py-4 text-gray-400 text-xs">{trade.direction.toUpperCase()}</td>
-                        <td className="px-6 py-4">
-                          <span className={`px-3 py-1 rounded-full text-[10px] tracking-widest font-bold ${trade.result === 'win' ? 'bg-[#D4AF37]/10 text-[#D4AF37]' : 'bg-red-500/10 text-red-400'}`}>{trade.result.toUpperCase()}</span>
+                        <td className="px-4 lg:px-6 py-3 lg:py-4 text-gray-500 font-mono text-[10px] lg:text-xs">{new Date(trade.closed_at).toLocaleDateString('id-ID')}</td>
+                        <td className="px-4 lg:px-6 py-3 lg:py-4 font-bold text-white text-xs">{trade.pair}</td>
+                        <td className="px-4 lg:px-6 py-3 lg:py-4">
+                          <span className={`px-2 lg:px-3 py-1 rounded-full text-[9px] lg:text-[10px] tracking-widest font-bold ${trade.result === 'win' ? 'bg-[#D4AF37]/10 text-[#D4AF37]' : 'bg-red-500/10 text-red-400'}`}>{trade.result.toUpperCase()}</span>
                         </td>
-                        <td className={`px-6 py-4 text-right font-mono text-sm ${trade.pips > 0 ? 'text-[#D4AF37]' : 'text-red-400'}`}>{trade.pips > 0 ? '+' : ''}{trade.pips}</td>
+                        <td className={`px-4 lg:px-6 py-3 lg:py-4 text-right font-mono text-xs lg:text-sm ${trade.pips > 0 ? 'text-[#D4AF37]' : 'text-red-400'}`}>{trade.pips > 0 ? '+' : ''}{trade.pips}</td>
                       </tr>
                     ))}
                   </tbody>
@@ -541,36 +546,36 @@ export default function Dashboard() {
         {activeTab === 'calculator' && (
           <div className="max-w-3xl mx-auto animate-in fade-in duration-500">
             <div className="bg-[#0a0a0a] border border-white/5 rounded-2xl shadow-2xl overflow-hidden">
-              <div className="p-6 border-b border-white/5 bg-gradient-to-r from-[#D4AF37]/10 to-transparent">
-                <h2 className="text-base font-serif text-white tracking-widest uppercase">Risk Management</h2>
+              <div className="p-4 lg:p-6 border-b border-white/5 bg-gradient-to-r from-[#D4AF37]/10 to-transparent">
+                <h2 className="text-sm lg:text-base font-serif text-white tracking-widest uppercase">Risk Management</h2>
               </div>
-              <div className="p-8 grid grid-cols-1 md:grid-cols-2 gap-8">
-                <div className="space-y-5">
+              <div className="p-4 lg:p-8 grid grid-cols-1 md:grid-cols-2 gap-6 lg:gap-8">
+                <div className="space-y-4 lg:space-y-5">
                   <div>
-                    <label className="block text-[10px] text-gray-500 uppercase tracking-widest mb-2">Account Balance (USD)</label>
-                    <input type="number" value={calcBalance} onChange={(e) => setCalcBalance(Number(e.target.value))} className="w-full bg-[#050505] p-4 rounded-xl border border-white/5 text-white font-mono text-lg outline-none focus:border-[#D4AF37]/50" />
+                    <label className="block text-[10px] text-gray-500 uppercase tracking-widest mb-1.5 lg:mb-2">Account Balance (USD)</label>
+                    <input type="number" value={calcBalance} onChange={(e) => setCalcBalance(Number(e.target.value))} className="w-full bg-[#050505] p-3 lg:p-4 rounded-xl border border-white/5 text-white font-mono text-base lg:text-lg outline-none focus:border-[#D4AF37]/50" />
                   </div>
-                  <div className="grid grid-cols-2 gap-4">
+                  <div className="grid grid-cols-2 gap-3 lg:gap-4">
                     <div>
-                      <label className="block text-[10px] text-gray-500 uppercase tracking-widest mb-2">Risk %</label>
-                      <input type="number" value={calcRisk} onChange={(e) => setCalcRisk(Number(e.target.value))} className="w-full bg-[#050505] p-4 rounded-xl border border-white/5 text-white font-mono text-lg outline-none focus:border-[#D4AF37]/50" />
+                      <label className="block text-[10px] text-gray-500 uppercase tracking-widest mb-1.5 lg:mb-2">Risk %</label>
+                      <input type="number" value={calcRisk} onChange={(e) => setCalcRisk(Number(e.target.value))} className="w-full bg-[#050505] p-3 lg:p-4 rounded-xl border border-white/5 text-white font-mono text-base lg:text-lg outline-none focus:border-[#D4AF37]/50" />
                     </div>
                     <div>
-                      <label className="block text-[10px] text-gray-500 uppercase tracking-widest mb-2">Stop Loss (Pips)</label>
-                      <input type="number" value={calcSl} onChange={(e) => setCalcSl(Number(e.target.value))} className="w-full bg-[#050505] p-4 rounded-xl border border-white/5 text-white font-mono text-lg outline-none focus:border-[#D4AF37]/50" />
+                      <label className="block text-[10px] text-gray-500 uppercase tracking-widest mb-1.5 lg:mb-2">Stop Loss (Pips)</label>
+                      <input type="number" value={calcSl} onChange={(e) => setCalcSl(Number(e.target.value))} className="w-full bg-[#050505] p-3 lg:p-4 rounded-xl border border-white/5 text-white font-mono text-base lg:text-lg outline-none focus:border-[#D4AF37]/50" />
                     </div>
                   </div>
                 </div>
 
-                <div className="bg-[#050505] rounded-xl p-6 border border-white/5 flex flex-col justify-center space-y-4">
+                <div className="bg-[#050505] rounded-xl p-5 lg:p-6 border border-white/5 flex flex-col justify-center space-y-4">
                   <div className="text-center">
                     <p className="text-[10px] text-gray-500 uppercase tracking-widest mb-1">Risk Amount</p>
-                    <p className="text-2xl font-mono text-red-400">${riskAmountUSD.toFixed(2)}</p>
+                    <p className="text-xl lg:text-2xl font-mono text-red-400">${riskAmountUSD.toFixed(2)}</p>
                   </div>
                   <div className="h-px w-full bg-white/5"></div>
                   <div className="text-center">
                     <p className="text-[10px] text-[#D4AF37] uppercase tracking-widest mb-1">Standard Lots</p>
-                    <p className="text-4xl font-mono text-[#D4AF37] tracking-widest">{lotSizeStandard.toFixed(2)}</p>
+                    <p className="text-3xl lg:text-4xl font-mono text-[#D4AF37] tracking-widest">{lotSizeStandard.toFixed(2)}</p>
                   </div>
                 </div>
               </div>
@@ -580,16 +585,39 @@ export default function Dashboard() {
 
       </main>
 
-      {/* MODAL ANALISIS */}
+      {/* MOBILE BOTTOM NAVIGATION */}
+      <nav className="lg:hidden fixed bottom-0 left-0 w-full bg-[#0a0a0a]/95 backdrop-blur-xl border-t border-white/5 z-40 pb-safe">
+        <div className="flex justify-around items-center h-16">
+           <button onClick={() => setActiveTab('calendar')} className={`flex flex-col items-center gap-1 w-full ${activeTab === 'calendar' ? 'text-[#D4AF37]' : 'text-gray-500'}`}>
+              <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 10V3L4 14h7v7l9-11h-7z" /></svg>
+              <span className="text-[9px] font-medium uppercase tracking-wider">Terminal</span>
+           </button>
+           <button onClick={() => setActiveTab('history')} className={`flex flex-col items-center gap-1 w-full ${activeTab === 'history' ? 'text-[#D4AF37]' : 'text-gray-500'}`}>
+              <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
+              <span className="text-[9px] font-medium uppercase tracking-wider">Arsip</span>
+           </button>
+           <button onClick={() => setActiveTab('performance')} className={`flex flex-col items-center gap-1 w-full ${activeTab === 'performance' ? 'text-[#D4AF37]' : 'text-gray-500'}`}>
+              <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" /></svg>
+              <span className="text-[9px] font-medium uppercase tracking-wider">Jurnal</span>
+           </button>
+           <button onClick={() => setActiveTab('calculator')} className={`flex flex-col items-center gap-1 w-full ${activeTab === 'calculator' ? 'text-[#D4AF37]' : 'text-gray-500'}`}>
+              <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 7h6m0 10v-3m-3 3h.01M9 17h.01M9 14h.01M12 14h.01M15 11h.01M12 11h.01M9 11h.01M7 21h10a2 2 0 002-2V5a2 2 0 00-2-2H7a2 2 0 00-2 2v14a2 2 0 002 2z" /></svg>
+              <span className="text-[9px] font-medium uppercase tracking-wider">Kalkulator</span>
+           </button>
+        </div>
+      </nav>
+
+      {/* MODAL ANALISIS (MOBILE & DESKTOP) */}
       {selectedEvent && !analysis && (
-        <div className="fixed inset-0 bg-black/90 backdrop-blur-xl flex items-center justify-center p-4 z-50 animate-in fade-in duration-300">
-          <div className="bg-[#0a0a0a] p-8 rounded-2xl w-full max-w-sm border border-white/10 shadow-[0_0_50px_rgba(212,175,55,0.1)] animate-in zoom-in-95">
+        <div className="fixed inset-0 bg-black/90 backdrop-blur-xl flex items-end sm:items-center justify-center p-0 sm:p-4 z-50 animate-in slide-in-from-bottom-full sm:slide-in-from-bottom-0 sm:fade-in duration-300">
+          <div className="bg-[#0a0a0a] p-6 lg:p-8 rounded-t-3xl sm:rounded-2xl w-full max-w-sm border-t sm:border border-white/10 shadow-[0_0_50px_rgba(212,175,55,0.1)] animate-in slide-in-from-bottom-1/2 sm:zoom-in-95">
             <div className="mb-6 text-center">
-              <h3 className="text-lg font-serif text-white tracking-widest uppercase mb-1">Generate Signal</h3>
+              <div className="w-12 h-1 bg-white/20 rounded-full mx-auto mb-4 sm:hidden"></div>
+              <h3 className="text-base lg:text-lg font-serif text-white tracking-widest uppercase mb-1">Generate Signal</h3>
               <p className="text-[10px] text-gray-500 tracking-wider">{selectedEvent.title}</p>
             </div>
             
-            <form onSubmit={handleAnalyze} className="space-y-5">
+            <form onSubmit={handleAnalyze} className="space-y-4 lg:space-y-5">
               <div>
                 <label className="block text-[10px] text-gray-500 uppercase tracking-widest mb-2 text-center">Pilih Pair</label>
                 <select 
@@ -611,7 +639,7 @@ export default function Dashboard() {
                 </p>
               </div>
 
-              <div className="flex gap-3">
+              <div className="flex gap-3 pt-2">
                 <button type="button" onClick={() => setSelectedEvent(null)} className="flex-1 px-4 py-3 rounded-xl text-gray-500 hover:text-white text-xs font-bold tracking-widest transition-colors">CANCEL</button>
                 <button type="submit" disabled={isAnalyzing} className="flex-[2] bg-[#D4AF37] hover:bg-[#c4a030] text-black px-4 py-3 rounded-xl text-xs font-bold tracking-widest transition-all disabled:opacity-50">
                   {isAnalyzing ? 'CALCULATING...' : 'GET SIGNAL'}
@@ -620,6 +648,75 @@ export default function Dashboard() {
             </form>
           </div>
         </div>
+      )}
+
+      {/* HASIL ANALISIS DI MOBILE (MUNCUL SEBAGAI LAYAR PENUH) */}
+      {analysis && (
+         <div className="xl:hidden fixed inset-0 bg-black/90 backdrop-blur-md z-50 overflow-y-auto p-4 flex flex-col animate-in slide-in-from-bottom duration-500">
+            <div className="bg-[#0a0a0a] border border-white/10 rounded-2xl w-full max-w-md mx-auto my-auto shadow-2xl overflow-hidden">
+               <div className="p-4 border-b border-white/5 flex justify-between items-center bg-[#111]">
+                  <h2 className="text-sm font-serif text-white tracking-widest uppercase">Signal Result</h2>
+                  <button onClick={() => { setAnalysis(null); setSelectedEvent(null); }} className="text-gray-500 hover:text-white bg-white/5 p-2 rounded-full">
+                     <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" /></svg>
+                  </button>
+               </div>
+               
+               <div className="p-5 space-y-5">
+                  <div className={`p-5 rounded-xl border flex flex-col items-center justify-center text-center ${
+                    analysis.direction === 'buy' ? 'bg-green-500/5 border-green-500/20' : 
+                    analysis.direction === 'sell' ? 'bg-red-500/5 border-red-500/20' : 
+                    'bg-gray-800/30 border-white/5'
+                  }`}>
+                    <p className="text-[10px] text-gray-400 mb-1 font-mono tracking-widest uppercase">{analysis.pair} • {analysis.timeframe}</p>
+                    <p className={`font-serif text-4xl tracking-[0.2em] uppercase ${
+                      analysis.direction === 'buy' ? 'text-green-400' : 
+                      analysis.direction === 'sell' ? 'text-red-400' : 'text-gray-300'
+                    }`}>{analysis.direction}</p>
+                    <p className="text-xs text-gray-500 mt-1">Live Price: {analysis.current_price}</p>
+                  </div>
+
+                  {analysis.direction !== 'no_trade' && (
+                    <div className="bg-[#111] border border-white/5 rounded-xl p-4 space-y-3">
+                       <div className="flex justify-between items-center border-b border-white/5 pb-2">
+                          <span className="text-[10px] text-gray-500 uppercase tracking-widest">Entry Zone</span>
+                          <span className="font-mono text-sm text-white font-bold">{analysis.entry_zone}</span>
+                       </div>
+                       <div className="flex justify-between items-center">
+                          <span className="text-[10px] text-red-400 uppercase tracking-widest">Stop Loss</span>
+                          <span className="font-mono text-sm text-red-400 font-bold">{analysis.stop_loss}</span>
+                       </div>
+                       <div className="flex justify-between items-center">
+                          <span className="text-[10px] text-green-400 uppercase tracking-widest">Take Profit</span>
+                          <span className="font-mono text-sm text-green-400 font-bold">{analysis.take_profit}</span>
+                       </div>
+                       <div className="flex justify-between items-center pt-2 border-t border-white/5">
+                          <span className="text-[10px] text-[#D4AF37] uppercase tracking-widest">Risk/Reward</span>
+                          <span className="font-mono text-sm text-[#D4AF37] font-bold">1 : {rrRatio}</span>
+                       </div>
+                    </div>
+                  )}
+
+                  <div>
+                    <h3 className="text-[10px] text-gray-500 uppercase tracking-[0.2em] mb-2">Trade Rationale</h3>
+                    {analysis.direction === 'no_trade' ? (
+                      <p className="text-sm text-red-400 italic">"{analysis.no_trade_reason}"</p>
+                    ) : (
+                      <ul className="text-xs text-gray-400 space-y-1.5 list-disc list-inside">
+                        <li><strong className="text-gray-200">Surprise:</strong> {analysis.rationale?.surprise}</li>
+                        <li><strong className="text-gray-200">History:</strong> {analysis.rationale?.historical}</li>
+                      </ul>
+                    )}
+                  </div>
+
+                  <div className="pt-4 border-t border-white/5">
+                    <div className="flex gap-3">
+                      <button onClick={() => saveTradeToJournal('win')} disabled={isSavingTrade} className="flex-1 border border-green-500/20 text-green-400 hover:bg-green-500 hover:text-black py-3 rounded-lg text-xs font-bold tracking-widest transition-all">WIN</button>
+                      <button onClick={() => saveTradeToJournal('loss')} disabled={isSavingTrade} className="flex-1 border border-red-500/20 text-red-400 hover:bg-red-500 hover:text-black py-3 rounded-lg text-xs font-bold tracking-widest transition-all">LOSS</button>
+                    </div>
+                  </div>
+               </div>
+            </div>
+         </div>
       )}
     </div>
   );
