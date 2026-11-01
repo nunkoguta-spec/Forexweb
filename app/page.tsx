@@ -59,7 +59,6 @@ export default function Dashboard() {
     } catch (err) {
       console.error("Gagal refresh data", err);
     }
-    // Beri sedikit jeda agar animasi berputar terlihat
     setTimeout(() => setIsRefreshing(false), 800);
   }
 
@@ -96,8 +95,12 @@ export default function Dashboard() {
     return () => { clearInterval(interval); clearInterval(timer); };
   }, [nextHighImpact]);
 
+  // --- PERBAIKAN CHART: Dependensi activeTab ---
   useEffect(() => {
-    if (typeof window !== 'undefined' && chartContainerRef.current && !chartContainerRef.current.hasChildNodes()) {
+    if (activeTab === 'calendar' && typeof window !== 'undefined' && chartContainerRef.current) {
+      // Bersihkan container sebelum memuat ulang chart
+      chartContainerRef.current.innerHTML = '';
+      
       const script = document.createElement('script');
       script.src = 'https://s3.tradingview.com/tv.js';
       script.async = true;
@@ -120,7 +123,7 @@ export default function Dashboard() {
       };
       chartContainerRef.current.appendChild(script);
     }
-  }, []);
+  }, [activeTab]); // <--- Memicu render ulang saat pindah tab
 
   async function fetchNews() {
     setErrorMessage(null);
@@ -234,7 +237,7 @@ export default function Dashboard() {
   return (
     <div className="min-h-screen flex flex-col bg-[#050505] font-sans selection:bg-[#D4AF37]/30 pb-20 lg:pb-10">
       
-      {/* HEADER - RESPONSIVE */}
+      {/* HEADER */}
       <header className="border-b border-white/5 bg-[#050505]/90 backdrop-blur-2xl sticky top-0 z-40">
         <div className="max-w-[1500px] mx-auto px-4 lg:px-6 h-16 lg:h-20 flex items-center justify-between">
           <div className="flex items-center gap-6 lg:gap-10">
@@ -243,7 +246,6 @@ export default function Dashboard() {
               <span className="text-sm lg:text-lg font-serif text-white tracking-[0.2em] uppercase">Forex Intel</span>
             </div>
             
-            {/* NAVIGASI DESKTOP */}
             <nav className="hidden lg:flex gap-1">
               {['calendar', 'history', 'performance', 'calculator'].map((tab) => (
                 <button
@@ -262,12 +264,9 @@ export default function Dashboard() {
           </div>
 
           <div className="flex items-center gap-3 lg:gap-6">
-            
-            {/* TOMBOL REFRESH */}
             <button 
               onClick={handleRefresh} 
               disabled={isRefreshing}
-              title="Refresh Data"
               className="w-8 h-8 lg:w-9 lg:h-9 flex items-center justify-center rounded-full bg-white/5 hover:bg-white/10 border border-white/10 text-gray-300 transition-all disabled:opacity-50"
             >
               <svg className={`w-4 h-4 ${isRefreshing ? 'animate-spin text-[#D4AF37]' : ''}`} fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -287,7 +286,7 @@ export default function Dashboard() {
         </div>
       </header>
 
-      {/* DAILY BRIEFING */}
+      {/* BRIEFING */}
       <div className="bg-[#D4AF37]/5 border-b border-[#D4AF37]/10">
         <div className="max-w-[1500px] mx-auto px-4 lg:px-6 py-2 lg:py-3 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-2 lg:gap-4">
           <div className="flex items-center gap-2 lg:gap-4 text-[10px] lg:text-xs tracking-wider text-gray-400">
@@ -327,7 +326,7 @@ export default function Dashboard() {
                 <div id="tradingview_chart" ref={chartContainerRef} className="w-full h-[250px] lg:h-[350px]" />
               </div>
 
-              {/* JADWAL & FOCUS MODE */}
+              {/* JADWAL */}
               <div className="bg-[#0a0a0a] border border-white/5 rounded-2xl overflow-hidden shadow-2xl">
                 <div className="p-4 lg:p-5 border-b border-white/5 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3 lg:gap-4">
                   <div>
@@ -347,7 +346,6 @@ export default function Dashboard() {
                   </div>
                 </div>
 
-                {/* TAMPILAN DESKTOP (TABEL) */}
                 <div className="hidden md:block overflow-x-auto max-h-[500px] custom-scrollbar">
                   <table className="w-full text-left text-sm whitespace-nowrap">
                     <thead className="bg-[#050505] text-gray-500 text-[10px] uppercase tracking-[0.2em] sticky top-0 z-10 border-b border-white/5">
@@ -389,7 +387,6 @@ export default function Dashboard() {
                   </table>
                 </div>
 
-                {/* TAMPILAN MOBILE (KARTU) */}
                 <div className="md:hidden flex flex-col divide-y divide-white/5 max-h-[500px] overflow-y-auto custom-scrollbar">
                    {importantEvents.length === 0 && (
                       <div className="text-center py-8 text-gray-600 text-sm">Tidak ada berita.</div>
@@ -417,7 +414,7 @@ export default function Dashboard() {
               </div>
             </div>
 
-            {/* KANAN: PANEL AI (Hanya muncul di Desktop) */}
+            {/* KANAN: PANEL AI (Desktop) */}
             <div className="hidden xl:block xl:col-span-4 h-fit sticky top-32">
               <div className="bg-[#0a0a0a] border border-white/5 rounded-2xl overflow-hidden shadow-2xl">
                 <div className="p-6 border-b border-white/5 bg-gradient-to-b from-[#D4AF37]/5 to-transparent">
