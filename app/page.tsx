@@ -27,6 +27,9 @@ export default function Dashboard() {
   const [dateFilter, setDateFilter] = useState<'yesterday' | 'today' | 'tomorrow'>('today');
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
+  // State Refresh
+  const [isRefreshing, setIsRefreshing] = useState(false);
+
   // State Kalkulator Risiko
   const [calcBalance, setCalcBalance] = useState<number | ''>(10000);
   const [calcRisk, setCalcRisk] = useState<number | ''>(1);
@@ -46,6 +49,18 @@ export default function Dashboard() {
   function formatDateWIB(dateString: string) {
     if (!dateString) return '-';
     return new Date(dateString).toLocaleDateString('id-ID', { timeZone: 'Asia/Jakarta', weekday: 'short', day: 'numeric', month: 'short' });
+  }
+
+  // Fungsi untuk Tombol Refresh
+  async function handleRefresh() {
+    setIsRefreshing(true);
+    try {
+      await Promise.all([fetchNews(), fetchMarketData(), fetchJournal()]);
+    } catch (err) {
+      console.error("Gagal refresh data", err);
+    }
+    // Beri sedikit jeda agar animasi berputar terlihat
+    setTimeout(() => setIsRefreshing(false), 800);
   }
 
   useEffect(() => {
@@ -129,6 +144,7 @@ export default function Dashboard() {
   async function fetchMarketData() {
     try { const res = await fetch('/api/market'); setMarketData(await res.json()); } catch (err) {}
   }
+  
   async function fetchJournal() {
     const { data, error } = await supabase.from('trade_journal').select('*').order('closed_at', { ascending: false });
     if (!error && data) setJournal(data);
@@ -245,8 +261,21 @@ export default function Dashboard() {
             </nav>
           </div>
 
-          <div className="flex items-center gap-4 lg:gap-6">
-            <div className="hidden sm:flex flex-col items-end border-r border-white/10 pr-4 lg:pr-6">
+          <div className="flex items-center gap-3 lg:gap-6">
+            
+            {/* TOMBOL REFRESH */}
+            <button 
+              onClick={handleRefresh} 
+              disabled={isRefreshing}
+              title="Refresh Data"
+              className="w-8 h-8 lg:w-9 lg:h-9 flex items-center justify-center rounded-full bg-white/5 hover:bg-white/10 border border-white/10 text-gray-300 transition-all disabled:opacity-50"
+            >
+              <svg className={`w-4 h-4 ${isRefreshing ? 'animate-spin text-[#D4AF37]' : ''}`} fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+              </svg>
+            </button>
+
+            <div className="hidden sm:flex flex-col items-end border-l border-white/10 pl-3 lg:pl-6">
               <span className="text-[9px] lg:text-[10px] text-gray-500 uppercase tracking-[0.2em] mb-0.5 lg:mb-1">Waktu Server</span>
               <span className="text-xs lg:text-sm font-mono text-white">{currentTime}</span>
             </div>
@@ -290,7 +319,7 @@ export default function Dashboard() {
           <div className="grid grid-cols-1 xl:grid-cols-12 gap-6 lg:gap-8 animate-in fade-in duration-500">
             
             <div className="xl:col-span-8 flex flex-col gap-6 lg:gap-8">
-              {/* CHART (Lebih kecil di HP) */}
+              {/* CHART */}
               <div className="bg-[#0a0a0a] border border-white/5 rounded-2xl overflow-hidden shadow-2xl relative">
                 <div className="absolute top-3 lg:top-4 left-4 lg:left-6 z-10 pointer-events-none">
                   <h2 className="text-xs lg:text-sm font-serif text-white tracking-widest uppercase">XAU/USD Live</h2>
@@ -607,7 +636,7 @@ export default function Dashboard() {
         </div>
       </nav>
 
-      {/* MODAL ANALISIS (MOBILE & DESKTOP) */}
+      {/* MODAL ANALISIS */}
       {selectedEvent && !analysis && (
         <div className="fixed inset-0 bg-black/90 backdrop-blur-xl flex items-end sm:items-center justify-center p-0 sm:p-4 z-50 animate-in slide-in-from-bottom-full sm:slide-in-from-bottom-0 sm:fade-in duration-300">
           <div className="bg-[#0a0a0a] p-6 lg:p-8 rounded-t-3xl sm:rounded-2xl w-full max-w-sm border-t sm:border border-white/10 shadow-[0_0_50px_rgba(212,175,55,0.1)] animate-in slide-in-from-bottom-1/2 sm:zoom-in-95">
@@ -650,7 +679,7 @@ export default function Dashboard() {
         </div>
       )}
 
-      {/* HASIL ANALISIS DI MOBILE (MUNCUL SEBAGAI LAYAR PENUH) */}
+      {/* HASIL ANALISIS DI MOBILE */}
       {analysis && (
          <div className="xl:hidden fixed inset-0 bg-black/90 backdrop-blur-md z-50 overflow-y-auto p-4 flex flex-col animate-in slide-in-from-bottom duration-500">
             <div className="bg-[#0a0a0a] border border-white/10 rounded-2xl w-full max-w-md mx-auto my-auto shadow-2xl overflow-hidden">
