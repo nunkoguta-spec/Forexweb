@@ -7,6 +7,7 @@ const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || '';
 const supabaseKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || '';
 const supabase = createClient(supabaseUrl, supabaseKey);
 
+/* ============ HELPERS ============ */
 function formatCountdown(diffMs: number): string {
   if (diffMs <= 0) return '00:00:00';
   const h = Math.floor(diffMs / 3600000);
@@ -26,25 +27,17 @@ function parseNum(str: string): number {
   return parseFloat(String(str).split('-')[0].replace(/[^0-9.]/g, ''));
 }
 
-// Compute pips from signal data
 function computePips(sig: any): { pips: number; resolvedPrice: number | null } {
   const entry = parseNum(sig.entry_zone);
   const sl = parseNum(sig.stop_loss);
   const tp = parseNum(sig.take_profit);
-  
   if (isNaN(entry) || isNaN(sl) || isNaN(tp)) return { pips: 0, resolvedPrice: null };
-  
-  const isWin = sig.status === 'win';
-  const isLoss = sig.status === 'loss';
-  
-  if (isWin) {
-    return { pips: Math.abs(tp - entry), resolvedPrice: sig.resolved_price || tp };
-  } else if (isLoss) {
-    return { pips: -Math.abs(sl - entry), resolvedPrice: sig.resolved_price || sl };
-  }
+  if (sig.status === 'win') return { pips: Math.abs(tp - entry), resolvedPrice: sig.resolved_price || tp };
+  if (sig.status === 'loss') return { pips: -Math.abs(sl - entry), resolvedPrice: sig.resolved_price || sl };
   return { pips: 0, resolvedPrice: null };
 }
 
+/* ============ ISOLATED COMPONENTS ============ */
 function LiveClock({ className = '' }: { className?: string }) {
   const [time, setTime] = useState('');
   useEffect(() => {
@@ -124,6 +117,7 @@ function SessionsTracker() {
 
 type PriceAlert = { id: string; pair: string; target: number; direction: 'above' | 'below'; triggered: boolean; createdAt: number };
 
+/* ============ MAIN ============ */
 export default function Dashboard() {
   const [session, setSession] = useState<any>(null);
   const [isAuthLoading, setIsAuthLoading] = useState(true);
@@ -154,33 +148,40 @@ export default function Dashboard() {
   const [calcRisk, setCalcRisk] = useState<number | ''>(1);
   const [calcSl, setCalcSl] = useState<number | ''>(20);
   const [nextHighImpact, setNextHighImpact] = useState<any>(null);
-  const chartContainerRef = useRef<HTMLDivElement>(null);
-  const strengthChartRef = useRef<HTMLDivElement>(null);
   const [notifPermission, setNotifPermission] = useState<string>('default');
   const [notifiedEvents, setNotifiedEvents] = useState<string[]>([]);
 
-  // ==== SIGNAL EVALUATION ====
+  // Signal evaluation
   const [lastEvaluatedAt, setLastEvaluatedAt] = useState<number | null>(null);
   const [isEvaluating, setIsEvaluating] = useState(false);
   const [isBackfilling, setIsBackfilling] = useState(false);
   const [signalFilter, setSignalFilter] = useState<'all' | 'pending' | 'resolved'>('all');
-  const marketDataRef = useRef<any>(null);
-  const hasBackfilledRef = useRef(false);
+  const [historyView, setHistoryView] = useState<'results' | 'events'>('results');
 
-  useEffect(() => { marketDataRef.current = marketData; }, [marketData]);
-
+  // Price alerts
   const [priceAlerts, setPriceAlerts] = useState<PriceAlert[]>([]);
   const [alertsModalOpen, setAlertsModalOpen] = useState(false);
   const [newAlertPair, setNewAlertPair] = useState('XAU/USD');
   const [newAlertPrice, setNewAlertPrice] = useState('');
   const [newAlertDirection, setNewAlertDirection] = useState<'above' | 'below'>('above');
 
+  // Chat
   const [chatOpen, setChatOpen] = useState(false);
   const [chatMessages, setChatMessages] = useState<{ role: 'user' | 'assistant'; content: string }[]>([]);
   const [chatInput, setChatInput] = useState('');
   const [chatLoading, setChatLoading] = useState(false);
-  const chatEndRef = useRef<HTMLDivElement>(null);
 
+  // Refs
+  const chartContainerRef = useRef<HTMLDivElement>(null);
+  const strengthChartRef = useRef<HTMLDivElement>(null);
+  const chatEndRef = useRef<HTMLDivElement>(null);
+  const marketDataRef = useRef<any>(null);
+  const evaluatingRef = useRef(false);
+  const backfilledRef = useRef(false);
+
+  useEffect(() => { marketDataRef.current = marketData; }, [marketData]);
+
+  /* ============ AUTH ============ */
   useEffect(() => {
     supabase.auth.getSession().then(({ data: { session } }) => {
       setSession(session);
@@ -195,6 +196,7 @@ export default function Dashboard() {
     return () => subscription.unsubscribe();
   }, []);
 
+  /* ============ PRICE ALERTS PERSIST ============ */
   useEffect(() => {
     try {
       const stored = localStorage.getItem('newssai_price_alerts');
@@ -225,23 +227,16 @@ export default function Dashboard() {
     return () => clearInterval(timer);
   }, [marketData, notifPermission]);
 
-  // ============================================================
-  // BACKFILL: Fix old resolved signals with null/0 pips
-  // ============================================================
+  /* ============ BACKFILL OLD RESOLVED SIGNALS ============ */
   const backfillResolvedSignals = useCallback(async () => {
-    if (hasBackfilledRef.current) return;
-    hasBackfilledRef.current = true;
+    if (backfilledRef.current) return;
+    backfilledRef.current = true;
     setIsBackfilling(true);
-    
     try {
-      const { data: allResolved, error } = await supabase
-        .from('daily_signals')
-        .select('*')
-        .in('status', ['win', 'loss']);
+      const { data: allResolved } = await supabase.from('daily_signals').select('*').in('status', ['win', 'loss']);
+      if (!allResolved) { setIsBackfilling(false); return; }
       
-      if (error || !allResolved) { setIsBackfilling(false); return; }
-      
-      let fixedCount = 0;
+      let fixed = 0;
       for (const sig of allResolved) {
         const needsPips = sig.pips_result === null || sig.pips_result === undefined || Number(sig.pips_result) === 0;
         const needsResolvedPrice = !sig.resolved_price;
@@ -254,13 +249,13 @@ export default function Dashboard() {
               resolved_price: sig.resolved_price || resolvedPrice,
               resolved_at: sig.resolved_at || new Date().toISOString(),
             }).eq('id', sig.id);
-            fixedCount++;
+            fixed++;
           }
         }
       }
       
-      if (fixedCount > 0) {
-        console.log(`Backfilled ${fixedCount} signals`);
+      if (fixed > 0) {
+        console.log(`Backfilled ${fixed} signals`);
         fetchDailySignals();
       }
     } catch (err) {
@@ -269,19 +264,19 @@ export default function Dashboard() {
     setIsBackfilling(false);
   }, []);
 
-  // ============================================================
-  // EVALUATE ALL PENDING SIGNALS
-  // ============================================================
+  /* ============ EVALUATE PENDING SIGNALS ============ */
   const evaluateAllPendingSignals = useCallback(async () => {
+    if (evaluatingRef.current) return;
     const currentMarket = marketDataRef.current;
-    if (!currentMarket || isEvaluating) return;
+    if (!currentMarket) return;
     
+    evaluatingRef.current = true;
     setIsEvaluating(true);
     try {
-      const { data: pendingSignals, error } = await supabase.from('daily_signals').select('*').eq('status', 'pending');
-      
-      if (error || !pendingSignals || pendingSignals.length === 0) {
+      const { data: pendingSignals } = await supabase.from('daily_signals').select('*').eq('status', 'pending');
+      if (!pendingSignals || pendingSignals.length === 0) {
         setLastEvaluatedAt(Date.now());
+        evaluatingRef.current = false;
         setIsEvaluating(false);
         return;
       }
@@ -302,19 +297,14 @@ export default function Dashboard() {
         let resolvedPrice = currentPrice;
         let pipsResult = 0;
 
-        if (sig.direction === 'buy' && currentPrice >= tp) {
-          newStatus = 'win'; resolvedPrice = tp; pipsResult = tp - entry;
-        } else if (sig.direction === 'sell' && currentPrice <= tp) {
-          newStatus = 'win'; resolvedPrice = tp; pipsResult = entry - tp;
-        } else if (sig.direction === 'buy' && currentPrice <= sl) {
-          newStatus = 'loss'; resolvedPrice = sl; pipsResult = sl - entry;
-        } else if (sig.direction === 'sell' && currentPrice >= sl) {
-          newStatus = 'loss'; resolvedPrice = sl; pipsResult = entry - sl;
-        } else {
+        if (sig.direction === 'buy' && currentPrice >= tp) { newStatus = 'win'; resolvedPrice = tp; pipsResult = tp - entry; }
+        else if (sig.direction === 'sell' && currentPrice <= tp) { newStatus = 'win'; resolvedPrice = tp; pipsResult = entry - tp; }
+        else if (sig.direction === 'buy' && currentPrice <= sl) { newStatus = 'loss'; resolvedPrice = sl; pipsResult = sl - entry; }
+        else if (sig.direction === 'sell' && currentPrice >= sl) { newStatus = 'loss'; resolvedPrice = sl; pipsResult = entry - sl; }
+        else {
           const createdAt = new Date(sig.created_at || sig.signal_date).getTime();
           const maxHours = getMaxDurationHours(sig.timeframe);
-          const hoursElapsed = (now - createdAt) / 3600000;
-          if (hoursElapsed >= maxHours) {
+          if ((now - createdAt) / 3600000 >= maxHours) {
             const profit = sig.direction === 'buy' ? currentPrice - entry : entry - currentPrice;
             newStatus = profit > 0 ? 'win' : 'loss';
             resolvedPrice = currentPrice;
@@ -324,10 +314,8 @@ export default function Dashboard() {
 
         if (newStatus) {
           await supabase.from('daily_signals').update({
-            status: newStatus,
-            resolved_price: resolvedPrice,
-            resolved_at: new Date().toISOString(),
-            pips_result: pipsResult,
+            status: newStatus, resolved_price: resolvedPrice,
+            resolved_at: new Date().toISOString(), pips_result: pipsResult,
           }).eq('id', sig.id);
           changed = true;
         }
@@ -338,10 +326,10 @@ export default function Dashboard() {
     } catch (err) {
       console.error('Evaluate error:', err);
     }
+    evaluatingRef.current = false;
     setIsEvaluating(false);
-  }, [isEvaluating]);
+  }, []);
 
-  // Auto-evaluate + backfill
   useEffect(() => {
     if (!session || !marketData) return;
     evaluateAllPendingSignals();
@@ -352,11 +340,12 @@ export default function Dashboard() {
   }, [session, marketData, evaluateAllPendingSignals]);
 
   useEffect(() => {
-    if (session && dailySignals.length > 0 && !hasBackfilledRef.current) {
+    if (session && dailySignals.length > 0 && !backfilledRef.current) {
       backfillResolvedSignals();
     }
   }, [session, dailySignals.length, backfillResolvedSignals]);
 
+  /* ============ CHART ============ */
   useEffect(() => {
     if (activeTab === 'calendar' && typeof window !== 'undefined' && chartContainerRef.current) {
       chartContainerRef.current.innerHTML = '';
@@ -389,14 +378,7 @@ export default function Dashboard() {
     if (chatOpen && chatEndRef.current) chatEndRef.current.scrollIntoView({ behavior: 'smooth' });
   }, [chatMessages, chatOpen]);
 
-  async function requestNotifPermission() {
-    if (typeof window !== 'undefined' && 'Notification' in window) {
-      const permission = await Notification.requestPermission();
-      setNotifPermission(permission);
-      if (permission === 'granted') new Notification("NewssAI", { body: "Notifications activated.", icon: '/logo.png' });
-    }
-  }
-
+  /* ============ NOTIF HIGH IMPACT ============ */
   useEffect(() => {
     if (notifPermission !== 'granted' || !nextHighImpact) return;
     const timer = setInterval(() => {
@@ -409,6 +391,15 @@ export default function Dashboard() {
     }, 30000);
     return () => clearInterval(timer);
   }, [nextHighImpact, notifPermission, notifiedEvents]);
+
+  /* ============ HANDLERS ============ */
+  async function requestNotifPermission() {
+    if (typeof window !== 'undefined' && 'Notification' in window) {
+      const permission = await Notification.requestPermission();
+      setNotifPermission(permission);
+      if (permission === 'granted') new Notification("NewssAI", { body: "Notifications activated.", icon: '/logo.png' });
+    }
+  }
 
   async function handleAuth(e: React.FormEvent) {
     e.preventDefault(); setIsAuthProcessing(true); setAuthMessage(null);
@@ -480,8 +471,7 @@ export default function Dashboard() {
     const thirtyDaysAgo = new Date();
     thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
     const { data, error } = await supabase
-      .from('daily_signals')
-      .select('*')
+      .from('daily_signals').select('*')
       .gte('signal_date', thirtyDaysAgo.toISOString().slice(0, 10))
       .order('signal_date', { ascending: false })
       .order('created_at', { ascending: false })
@@ -553,15 +543,9 @@ export default function Dashboard() {
     let pipsResult: number;
     let resolvedPrice: number;
     
-    if (forceStatus === 'win') {
-      newStatus = 'win';
-      pipsResult = Math.abs(tp - entry);
-      resolvedPrice = tp;
-    } else if (forceStatus === 'loss') {
-      newStatus = 'loss';
-      pipsResult = -Math.abs(sl - entry);
-      resolvedPrice = sl;
-    } else {
+    if (forceStatus === 'win') { newStatus = 'win'; pipsResult = Math.abs(tp - entry); resolvedPrice = tp; }
+    else if (forceStatus === 'loss') { newStatus = 'loss'; pipsResult = -Math.abs(sl - entry); resolvedPrice = sl; }
+    else {
       const profit = sig.direction === 'buy' ? currentPrice - entry : entry - currentPrice;
       newStatus = profit > 0 ? 'win' : 'loss';
       pipsResult = profit;
@@ -569,10 +553,8 @@ export default function Dashboard() {
     }
     
     const { error } = await supabase.from('daily_signals').update({
-      status: newStatus,
-      resolved_price: resolvedPrice,
-      resolved_at: new Date().toISOString(),
-      pips_result: pipsResult,
+      status: newStatus, resolved_price: resolvedPrice,
+      resolved_at: new Date().toISOString(), pips_result: pipsResult,
     }).eq('id', sig.id);
     
     if (!error) fetchDailySignals();
@@ -621,6 +603,7 @@ export default function Dashboard() {
     setChatLoading(false);
   }
 
+  /* ============ COMPUTED ============ */
   const today = new Date(); today.setHours(0, 0, 0, 0);
   const tomorrow = new Date(today); tomorrow.setDate(tomorrow.getDate() + 1);
   const yesterday = new Date(today); yesterday.setDate(yesterday.getDate() - 1);
@@ -655,7 +638,6 @@ export default function Dashboard() {
   const aiLosses = aiResolved.filter(s => s.status === 'loss').length;
   const aiWinRate = aiResolved.length > 0 ? ((aiWins / aiResolved.length) * 100).toFixed(1) : "0.0";
   
-  // Calculate total pips using computePips fallback
   const aiTotalPips = aiResolved.reduce((acc, s) => {
     const { pips } = computePips(s);
     const stored = Number(s.pips_result);
@@ -684,7 +666,7 @@ export default function Dashboard() {
     { id: 'daily', label: 'Signals', icon: (
       <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M13 10V3L4 14h7v7l9-11h-7z" /></svg>
     )},
-    { id: 'history', label: 'Archive', icon: (
+    { id: 'history', label: 'History', icon: (
       <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M5 8h14M5 8a2 2 0 110-4h14a2 2 0 110 4M5 8v10a2 2 0 002 2h10a2 2 0 002-2V8m-9 4h4" /></svg>
     )},
     { id: 'performance', label: 'Journal', icon: (
@@ -695,6 +677,7 @@ export default function Dashboard() {
     )},
   ];
 
+  /* ============ RENDER: LOADING ============ */
   if (isAuthLoading) {
     return (
       <div className="min-h-screen bg-[#09090B] flex items-center justify-center font-sans text-white/50 text-sm">
@@ -703,6 +686,7 @@ export default function Dashboard() {
     );
   }
 
+  /* ============ RENDER: LOGIN ============ */
   if (!session) {
     return (
       <div className="min-h-screen bg-[#09090B] flex items-center justify-center p-4 font-sans text-white relative">
@@ -730,6 +714,7 @@ export default function Dashboard() {
     );
   }
 
+  /* ============ RENDER: MAIN ============ */
   return (
     <div className="min-h-screen flex flex-col bg-[#09090B] text-gray-300 font-sans text-sm selection:bg-[#FF6600] selection:text-black pb-28 lg:pb-0 relative">
       <div className="fixed inset-0 pointer-events-none overflow-hidden z-0">
@@ -737,6 +722,7 @@ export default function Dashboard() {
         <div className="absolute bottom-0 right-1/4 w-[600px] h-[600px] bg-[#FF6600] opacity-[0.02] rounded-full blur-[120px]"></div>
       </div>
 
+      {/* HEADER */}
       <header className="relative z-30 bg-[#09090B]/80 backdrop-blur-2xl border-b border-white/5 sticky top-0">
         <div className="h-0.5 w-full bg-gradient-to-r from-transparent via-[#FF6600] to-transparent opacity-50"></div>
         <div className="max-w-[1600px] mx-auto px-4 lg:px-6 h-16 flex items-center justify-between">
@@ -776,6 +762,7 @@ export default function Dashboard() {
       <main className="relative z-10 flex-1 max-w-[1600px] w-full mx-auto p-4 lg:p-6">
         {errorMessage && (<div className="mb-6 p-4 bg-red-500/10 border border-red-500/20 rounded-2xl text-red-300 text-xs backdrop-blur-xl">{errorMessage}</div>)}
 
+        {/* ============ TAB: MARKETS ============ */}
         {activeTab === 'calendar' && (
           <div className="animate-in fade-in duration-500">
             <div className="grid grid-cols-2 md:grid-cols-4 gap-3 lg:gap-4 mb-6">
@@ -873,30 +860,18 @@ export default function Dashboard() {
           </div>
         )}
 
+        {/* ============ TAB: SIGNALS ============ */}
         {activeTab === 'daily' && (
           <div className="animate-in fade-in slide-in-from-bottom-2 duration-500">
             <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 mb-6">
               <div>
                 <h2 className="text-2xl font-bold text-white tracking-tight">Daily Signals</h2>
-                <p className="text-xs text-gray-500 mt-1">
-                  {isBackfilling ? 'Fixing legacy data...' : `Auto-evaluated · ${lastEvaluatedAt ? `Last: ${new Date(lastEvaluatedAt).toLocaleTimeString('id-ID', { timeZone: 'Asia/Jakarta' })}` : 'Loading...'}`}
-                </p>
+                <p className="text-xs text-gray-500 mt-1">{isBackfilling ? 'Fixing legacy data...' : `Auto-evaluated · ${lastEvaluatedAt ? `Last: ${new Date(lastEvaluatedAt).toLocaleTimeString('id-ID', { timeZone: 'Asia/Jakarta' })}` : 'Loading...'}`}</p>
               </div>
               <div className="flex gap-2 w-full sm:w-auto">
-                <button onClick={backfillResolvedSignals} disabled={isBackfilling}
-                  className="flex-1 sm:flex-none bg-white/[0.03] hover:bg-white/[0.06] border border-white/10 text-white px-3 py-2.5 rounded-xl text-xs font-semibold transition-all disabled:opacity-50 flex items-center justify-center gap-2">
-                  <svg className={`w-3.5 h-3.5 ${isBackfilling ? 'animate-spin' : ''}`} fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" /></svg>
-                  Fix Data
-                </button>
-                <button onClick={evaluateAllPendingSignals} disabled={isEvaluating}
-                  className="flex-1 sm:flex-none bg-white/[0.03] hover:bg-white/[0.06] border border-white/10 text-white px-3 py-2.5 rounded-xl text-xs font-semibold transition-all disabled:opacity-50 flex items-center justify-center gap-2">
-                  <svg className={`w-3.5 h-3.5 ${isEvaluating ? 'animate-spin' : ''}`} fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
-                  Evaluate
-                </button>
-                <button onClick={generateDailySignals} disabled={isGeneratingDaily}
-                  className="flex-1 sm:flex-none bg-[#FF6600] text-black px-4 py-2.5 rounded-xl text-xs font-semibold tracking-wider uppercase shadow-lg shadow-[#FF6600]/20 hover:bg-[#E65C00] disabled:opacity-50 transition-all">
-                  {isGeneratingDaily ? 'Generating...' : 'Generate'}
-                </button>
+                <button onClick={backfillResolvedSignals} disabled={isBackfilling} className="flex-1 sm:flex-none bg-white/[0.03] hover:bg-white/[0.06] border border-white/10 text-white px-3 py-2.5 rounded-xl text-xs font-semibold transition-all disabled:opacity-50 flex items-center justify-center gap-2"><svg className={`w-3.5 h-3.5 ${isBackfilling ? 'animate-spin' : ''}`} fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" /></svg>Fix Data</button>
+                <button onClick={evaluateAllPendingSignals} disabled={isEvaluating} className="flex-1 sm:flex-none bg-white/[0.03] hover:bg-white/[0.06] border border-white/10 text-white px-3 py-2.5 rounded-xl text-xs font-semibold transition-all disabled:opacity-50 flex items-center justify-center gap-2"><svg className={`w-3.5 h-3.5 ${isEvaluating ? 'animate-spin' : ''}`} fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>Evaluate</button>
+                <button onClick={generateDailySignals} disabled={isGeneratingDaily} className="flex-1 sm:flex-none bg-[#FF6600] text-black px-4 py-2.5 rounded-xl text-xs font-semibold tracking-wider uppercase shadow-lg shadow-[#FF6600]/20 hover:bg-[#E65C00] disabled:opacity-50 transition-all">{isGeneratingDaily ? 'Generating...' : 'Generate'}</button>
               </div>
             </div>
 
@@ -929,12 +904,10 @@ export default function Dashboard() {
                   const isPending = sig.status === 'pending';
                   const isWin = sig.status === 'win';
                   const isLoss = sig.status === 'loss';
-                  
                   const e = parseNum(sig.entry_zone); const s = parseNum(sig.stop_loss); const t = parseNum(sig.take_profit);
                   let rr = "-";
                   if (!isNaN(e) && !isNaN(s) && !isNaN(t) && e !== s) rr = `1:${(Math.abs(t - e) / Math.abs(e - s)).toFixed(1)}`;
                   
-                  // Compute pips & resolved price with fallback
                   const { pips: computedPips, resolvedPrice: computedResolvedPrice } = computePips(sig);
                   const storedPips = Number(sig.pips_result);
                   const finalPips = (!isNaN(storedPips) && storedPips !== 0) ? storedPips : computedPips;
@@ -942,9 +915,7 @@ export default function Dashboard() {
 
                   return (
                     <div key={i} className={`relative bg-white/[0.02] backdrop-blur-xl border rounded-3xl overflow-hidden transition-all ${isPending ? 'border-white/[0.06]' : isWin ? 'border-green-500/30' : 'border-red-500/30'}`}>
-                      <div className={`absolute top-4 right-4 px-2.5 py-1 text-[9px] font-bold rounded-full ${isPending ? 'bg-amber-500/20 text-amber-400 border border-amber-500/30' : isWin ? 'bg-green-500/20 text-green-400 border border-green-500/30' : 'bg-red-500/20 text-red-400 border border-red-500/30'}`}>
-                        {isPending ? '● PENDING' : isWin ? '✓ WIN' : '✗ LOSS'}
-                      </div>
+                      <div className={`absolute top-4 right-4 px-2.5 py-1 text-[9px] font-bold rounded-full ${isPending ? 'bg-amber-500/20 text-amber-400 border border-amber-500/30' : isWin ? 'bg-green-500/20 text-green-400 border border-green-500/30' : 'bg-red-500/20 text-red-400 border border-red-500/30'}`}>{isPending ? '● PENDING' : isWin ? '✓ WIN' : '✗ LOSS'}</div>
                       
                       <div className="p-6 border-b border-white/5">
                         <div className="flex items-center gap-2 mb-2"><span className={`w-2 h-2 rounded-full ${sig.direction === 'buy' ? 'bg-green-500' : 'bg-red-500'}`}></span><span className={`text-[10px] font-bold uppercase tracking-wider ${sig.direction === 'buy' ? 'text-green-400' : 'text-red-400'}`}>{sig.direction === 'buy' ? 'Bullish' : 'Bearish'}</span></div>
@@ -956,24 +927,12 @@ export default function Dashboard() {
                         <div className="flex justify-between"><span className="text-gray-500">Entry</span><span className="text-white font-semibold">{sig.entry_zone}</span></div>
                         <div className="flex justify-between"><span className="text-gray-500">SL</span><span className="text-red-400 font-semibold">{sig.stop_loss}</span></div>
                         <div className="flex justify-between"><span className="text-gray-500">TP</span><span className="text-green-400 font-semibold">{sig.take_profit}</span></div>
-                        
                         {!isPending && (
                           <>
-                            <div className="flex justify-between pt-2 border-t border-white/5 mt-2">
-                              <span className="text-gray-500">Resolved</span>
-                              <span className="text-gray-300 font-semibold">
-                                {finalResolvedPrice && !isNaN(Number(finalResolvedPrice)) ? Number(finalResolvedPrice).toFixed(2) : '—'}
-                              </span>
-                            </div>
-                            <div className="flex justify-between">
-                              <span className={`font-medium ${finalPips >= 0 ? 'text-green-400' : 'text-red-400'}`}>Pips</span>
-                              <span className={`font-bold ${finalPips >= 0 ? 'text-green-400' : 'text-red-400'}`}>
-                                {finalPips > 0 ? '+' : ''}{finalPips.toFixed(1)}
-                              </span>
-                            </div>
+                            <div className="flex justify-between pt-2 border-t border-white/5 mt-2"><span className="text-gray-500">Resolved</span><span className="text-gray-300 font-semibold">{finalResolvedPrice && !isNaN(Number(finalResolvedPrice)) ? Number(finalResolvedPrice).toFixed(2) : '—'}</span></div>
+                            <div className="flex justify-between"><span className={`font-medium ${finalPips >= 0 ? 'text-green-400' : 'text-red-400'}`}>Pips</span><span className={`font-bold ${finalPips >= 0 ? 'text-green-400' : 'text-red-400'}`}>{finalPips > 0 ? '+' : ''}{finalPips.toFixed(1)}</span></div>
                           </>
                         )}
-                        
                         <div className="flex justify-between pt-2 border-t border-white/5"><span className="text-[#FF6600] font-medium">R:R</span><span className="text-[#FF6600] font-semibold">{rr}</span></div>
                       </div>
 
@@ -987,12 +946,7 @@ export default function Dashboard() {
                           </div>
                         </div>
                       )}
-                      
-                      {!isPending && (
-                        <div className="p-4 bg-white/[0.01] border-t border-white/5">
-                          <p className="text-[10px] text-gray-500 italic leading-relaxed line-clamp-2">"{sig.rationale}"</p>
-                        </div>
-                      )}
+                      {!isPending && (<div className="p-4 bg-white/[0.01] border-t border-white/5"><p className="text-[10px] text-gray-500 italic leading-relaxed line-clamp-2">"{sig.rationale}"</p></div>)}
                     </div>
                   );
                 })}
@@ -1001,30 +955,146 @@ export default function Dashboard() {
           </div>
         )}
 
+        {/* ============ TAB: HISTORY ============ */}
         {activeTab === 'history' && (
           <div className="animate-in fade-in slide-in-from-bottom-2 duration-500">
-            <div className="mb-8"><h2 className="text-2xl font-bold text-white tracking-tight">Historical Archive</h2><p className="text-xs text-gray-500 mt-1">Past economic events</p></div>
-            <div className="bg-white/[0.02] backdrop-blur-xl border border-white/[0.06] rounded-3xl overflow-hidden">
-              <div className="overflow-x-auto">
-                <table className="w-full text-left text-xs whitespace-nowrap">
-                  <thead className="bg-white/[0.02] text-gray-500 text-[10px] uppercase tracking-widest border-b border-white/5"><tr><th className="px-4 sm:px-6 py-4 font-medium">Date</th><th className="px-4 sm:px-6 py-4 font-medium">Cur</th><th className="px-4 sm:px-6 py-4 font-medium">Event</th><th className="px-4 sm:px-6 py-4 text-center font-medium">Actual</th></tr></thead>
-                  <tbody className="divide-y divide-white/5">
-                    {pastEvents.map((ev, i) => (
-                      <tr key={i} className="hover:bg-white/[0.02]">
-                        <td className="px-4 sm:px-6 py-4 text-gray-400 font-mono">{formatDateWIB(ev.date)}</td>
-                        <td className="px-4 sm:px-6 py-4"><span className="px-2 py-1 rounded-md bg-[#FF6600]/10 text-[#FF6600] font-semibold text-[10px]">{ev.country}</span></td>
-                        <td className="px-4 sm:px-6 py-4 text-gray-300">{ev.title}</td>
-                        <td className="px-4 sm:px-6 py-4 text-center text-white font-mono font-semibold">{ev.actual || '—'}</td>
-                      </tr>
-                    ))}
-                    {pastEvents.length === 0 && (<tr><td colSpan={4} className="text-center py-12 text-gray-600 text-sm">No archived events.</td></tr>)}
-                  </tbody>
-                </table>
+            <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 mb-6">
+              <div>
+                <h2 className="text-2xl font-bold text-white tracking-tight">History</h2>
+                <p className="text-xs text-gray-500 mt-1">Semua hasil signal & berita lampau · {dailySignals.length} records</p>
+              </div>
+              <div className="flex gap-1 bg-white/[0.02] border border-white/[0.06] p-1 rounded-xl">
+                <button onClick={() => setHistoryView('results')} className={`px-4 py-2 rounded-lg text-xs font-semibold transition-all ${historyView === 'results' ? 'bg-[#FF6600] text-black' : 'text-gray-400 hover:text-white'}`}>Signal Results</button>
+                <button onClick={() => setHistoryView('events')} className={`px-4 py-2 rounded-lg text-xs font-semibold transition-all ${historyView === 'events' ? 'bg-[#FF6600] text-black' : 'text-gray-400 hover:text-white'}`}>News Events</button>
               </div>
             </div>
+
+            {historyView === 'results' && (
+              <>
+                <div className="grid grid-cols-2 md:grid-cols-5 gap-3 mb-6">
+                  <div className="bg-white/[0.02] backdrop-blur-xl border border-white/[0.06] rounded-2xl p-4 sm:p-5">
+                    <div className="text-[10px] text-gray-500 uppercase tracking-widest mb-1">Total Signals</div>
+                    <div className="text-2xl font-mono font-semibold text-white">{aiResolved.length}</div>
+                    <div className="text-[10px] text-gray-600 mt-0.5">{aiPending.length} pending</div>
+                  </div>
+                  <div className="bg-white/[0.02] backdrop-blur-xl border border-green-500/20 rounded-2xl p-4 sm:p-5">
+                    <div className="text-[10px] text-green-400/70 uppercase tracking-widest mb-1">Wins</div>
+                    <div className="text-2xl font-mono font-semibold text-green-400">{aiWins}</div>
+                    <div className="text-[10px] text-gray-600 mt-0.5">✓ Correct calls</div>
+                  </div>
+                  <div className="bg-white/[0.02] backdrop-blur-xl border border-red-500/20 rounded-2xl p-4 sm:p-5">
+                    <div className="text-[10px] text-red-400/70 uppercase tracking-widest mb-1">Losses</div>
+                    <div className="text-2xl font-mono font-semibold text-red-400">{aiLosses}</div>
+                    <div className="text-[10px] text-gray-600 mt-0.5">✗ Wrong calls</div>
+                  </div>
+                  <div className="bg-white/[0.02] backdrop-blur-xl border border-[#FF6600]/30 rounded-2xl p-4 sm:p-5">
+                    <div className="text-[10px] text-[#FF6600] uppercase tracking-widest mb-1">Accuracy</div>
+                    <div className="text-2xl font-mono font-semibold text-[#FF6600]">{aiWinRate}%</div>
+                    <div className="text-[10px] text-gray-600 mt-0.5">Win / Total</div>
+                  </div>
+                  <div className="bg-gradient-to-br from-[#FF6600]/20 to-[#FF6600]/5 backdrop-blur-xl border border-[#FF6600]/30 rounded-2xl p-4 sm:p-5">
+                    <div className="text-[10px] text-[#FF6600] uppercase tracking-widest font-medium mb-1">Net Pips</div>
+                    <div className={`text-2xl font-mono font-semibold ${aiTotalPips >= 0 ? 'text-green-400' : 'text-red-400'}`}>{aiTotalPips > 0 ? '+' : ''}{aiTotalPips.toFixed(1)}</div>
+                    <div className="text-[10px] text-gray-600 mt-0.5">Accumulated</div>
+                  </div>
+                </div>
+
+                {aiResolved.length === 0 ? (
+                  <div className="bg-white/[0.02] backdrop-blur-xl border border-white/[0.06] rounded-3xl p-16 text-center"><p className="text-sm text-gray-400 font-medium">Belum ada signal yang selesai</p><p className="text-xs text-gray-600 mt-1">Signal akan muncul di sini setelah WIN atau LOSS.</p></div>
+                ) : (
+                  <div className="bg-white/[0.02] backdrop-blur-xl border border-white/[0.06] rounded-3xl overflow-hidden">
+                    <div className="overflow-x-auto">
+                      <table className="w-full text-left text-xs whitespace-nowrap">
+                        <thead className="bg-white/[0.02] text-gray-500 text-[10px] uppercase tracking-widest border-b border-white/5">
+                          <tr>
+                            <th className="px-4 sm:px-6 py-4 font-medium">Tanggal</th>
+                            <th className="px-4 sm:px-6 py-4 font-medium">Jam WIB</th>
+                            <th className="px-4 sm:px-6 py-4 font-medium">Pair</th>
+                            <th className="px-4 sm:px-6 py-4 font-medium">Arah</th>
+                            <th className="px-4 sm:px-6 py-4 font-medium text-center">Entry → Exit</th>
+                            <th className="px-4 sm:px-6 py-4 font-medium text-right">Pips</th>
+                            <th className="px-4 sm:px-6 py-4 font-medium text-center">Result</th>
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y divide-white/5">
+                          {aiResolved.slice().sort((a, b) => {
+                            const aT = new Date(a.resolved_at || a.signal_date).getTime();
+                            const bT = new Date(b.resolved_at || b.signal_date).getTime();
+                            return bT - aT;
+                          }).map((sig, i) => {
+                            const { pips: computedPips, resolvedPrice: computedResolvedPrice } = computePips(sig);
+                            const storedPips = Number(sig.pips_result);
+                            const finalPips = (!isNaN(storedPips) && storedPips !== 0) ? storedPips : computedPips;
+                            const finalResolved = sig.resolved_price || computedResolvedPrice;
+                            const entry = parseNum(sig.entry_zone);
+                            const isWin = sig.status === 'win';
+
+                            return (
+                              <tr key={i} className="hover:bg-white/[0.02] transition-colors">
+                                <td className="px-4 sm:px-6 py-3 text-gray-400 font-mono">{formatDateWIB(sig.signal_date)}</td>
+                                <td className="px-4 sm:px-6 py-3 text-gray-500 font-mono">{sig.created_at ? formatTimeWIB(sig.created_at) : '—'}</td>
+                                <td className="px-4 sm:px-6 py-3"><span className="text-white text-sm font-semibold">{sig.pair}</span><span className="text-gray-600 text-[10px] ml-2">{sig.timeframe}</span></td>
+                                <td className="px-4 sm:px-6 py-3">
+                                  <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-bold ${sig.direction === 'buy' ? 'bg-green-500/10 text-green-400' : 'bg-red-500/10 text-red-400'}`}>
+                                    {sig.direction === 'buy' ? '▲ BUY' : '▼ SELL'}
+                                  </span>
+                                </td>
+                                <td className="px-4 sm:px-6 py-3 text-center text-gray-300 font-mono text-[11px]">
+                                  {!isNaN(entry) ? entry.toFixed(2) : '—'}
+                                  <span className="text-gray-600 mx-1.5">→</span>
+                                  {finalResolved && !isNaN(Number(finalResolved)) ? Number(finalResolved).toFixed(2) : '—'}
+                                </td>
+                                <td className={`px-4 sm:px-6 py-3 text-right font-mono font-bold ${finalPips >= 0 ? 'text-green-400' : 'text-red-400'}`}>{finalPips > 0 ? '+' : ''}{finalPips.toFixed(1)}</td>
+                                <td className="px-4 sm:px-6 py-3 text-center">
+                                  <span className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-[10px] font-bold ${isWin ? 'bg-green-500/10 text-green-400 border border-green-500/30' : 'bg-red-500/10 text-red-400 border border-red-500/30'}`}>
+                                    {isWin ? '✓ WIN' : '✗ LOSS'}
+                                  </span>
+                                </td>
+                              </tr>
+                            );
+                          })}
+                        </tbody>
+                      </table>
+                    </div>
+                    <div className="border-t border-white/5 p-4 sm:p-5 bg-white/[0.01] flex flex-wrap justify-between items-center gap-4 text-xs">
+                      <div className="text-gray-500">Menampilkan <strong className="text-white">{aiResolved.length}</strong> signal selesai</div>
+                      <div className="flex items-center gap-6">
+                        <div className="flex items-center gap-2"><span className="w-2 h-2 rounded-full bg-green-500"></span><span className="text-gray-400">WIN: <strong className="text-green-400">{aiWins}</strong></span></div>
+                        <div className="flex items-center gap-2"><span className="w-2 h-2 rounded-full bg-red-500"></span><span className="text-gray-400">LOSS: <strong className="text-red-400">{aiLosses}</strong></span></div>
+                        <div className="flex items-center gap-2"><span className="text-[#FF6600]">Accuracy:</span><strong className="text-[#FF6600]">{aiWinRate}%</strong></div>
+                      </div>
+                    </div>
+                  </div>
+                )}
+              </>
+            )}
+
+            {historyView === 'events' && (
+              <div className="bg-white/[0.02] backdrop-blur-xl border border-white/[0.06] rounded-3xl overflow-hidden">
+                <div className="overflow-x-auto">
+                  <table className="w-full text-left text-xs whitespace-nowrap">
+                    <thead className="bg-white/[0.02] text-gray-500 text-[10px] uppercase tracking-widest border-b border-white/5">
+                      <tr><th className="px-4 sm:px-6 py-4 font-medium">Date</th><th className="px-4 sm:px-6 py-4 font-medium">Cur</th><th className="px-4 sm:px-6 py-4 font-medium">Event</th><th className="px-4 sm:px-6 py-4 text-center font-medium">Actual</th></tr>
+                    </thead>
+                    <tbody className="divide-y divide-white/5">
+                      {pastEvents.map((ev, i) => (
+                        <tr key={i} className="hover:bg-white/[0.02]">
+                          <td className="px-4 sm:px-6 py-4 text-gray-400 font-mono">{formatDateWIB(ev.date)}</td>
+                          <td className="px-4 sm:px-6 py-4"><span className="px-2 py-1 rounded-md bg-[#FF6600]/10 text-[#FF6600] font-semibold text-[10px]">{ev.country}</span></td>
+                          <td className="px-4 sm:px-6 py-4 text-gray-300">{ev.title}</td>
+                          <td className="px-4 sm:px-6 py-4 text-center text-white font-mono font-semibold">{ev.actual || '—'}</td>
+                        </tr>
+                      ))}
+                      {pastEvents.length === 0 && (<tr><td colSpan={4} className="text-center py-12 text-gray-600 text-sm">No archived events.</td></tr>)}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            )}
           </div>
         )}
 
+        {/* ============ TAB: JOURNAL ============ */}
         {activeTab === 'performance' && (
           <div className="animate-in fade-in slide-in-from-bottom-2 duration-500">
             <div className="mb-8"><h2 className="text-2xl font-bold text-white tracking-tight">Trade Journal</h2><p className="text-xs text-gray-500 mt-1">Execution ledger</p></div>
@@ -1056,6 +1126,7 @@ export default function Dashboard() {
           </div>
         )}
 
+        {/* ============ TAB: RISK ============ */}
         {activeTab === 'calculator' && (
           <div className="animate-in fade-in slide-in-from-bottom-2 duration-500">
             <div className="mb-8"><h2 className="text-2xl font-bold text-white tracking-tight">Risk</h2><p className="text-xs text-gray-500 mt-1">Position sizing</p></div>
@@ -1077,6 +1148,7 @@ export default function Dashboard() {
         )}
       </main>
 
+      {/* MOBILE NAV */}
       <nav className="lg:hidden fixed bottom-3 left-3 right-3 z-40">
         <div className="bg-[#09090B]/95 backdrop-blur-2xl border border-white/10 rounded-2xl flex justify-around items-center h-[68px] shadow-2xl px-1">
           {navTabs.map((tab) => (
@@ -1088,11 +1160,13 @@ export default function Dashboard() {
         </div>
       </nav>
 
+      {/* CHAT BUTTON */}
       <button onClick={() => setChatOpen(true)} className="fixed bottom-[100px] lg:bottom-6 right-4 lg:right-6 z-40 w-14 h-14 rounded-full bg-[#FF6600] shadow-[0_8px_32px_rgba(255,102,0,0.5)] hover:shadow-[0_8px_40px_rgba(255,102,0,0.7)] flex items-center justify-center transition-all hover:scale-110 active:scale-95" title="AI Chat">
         <svg className="w-6 h-6 text-black" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}><path strokeLinecap="round" strokeLinejoin="round" d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z" /></svg>
         <span className="absolute -top-1 -right-1 w-3 h-3 bg-green-500 rounded-full animate-pulse border-2 border-[#09090B]"></span>
       </button>
 
+      {/* ALERTS MODAL */}
       {alertsModalOpen && (
         <div className="fixed inset-0 bg-black/80 backdrop-blur-md flex items-center justify-center p-4 z-50">
           <div className="bg-[#09090B] border border-white/10 rounded-3xl w-full max-w-md shadow-2xl overflow-hidden max-h-[90vh] flex flex-col">
@@ -1137,6 +1211,7 @@ export default function Dashboard() {
         </div>
       )}
 
+      {/* CHAT OVERLAY */}
       {chatOpen && (
         <div className="fixed inset-0 bg-black/80 backdrop-blur-md z-50 flex items-end sm:items-center justify-center p-0 sm:p-4">
           <div className="bg-[#09090B] border border-white/10 rounded-t-3xl sm:rounded-3xl w-full max-w-md shadow-2xl overflow-hidden flex flex-col h-[85vh] sm:h-[600px] animate-in slide-in-from-bottom sm:zoom-in-95 duration-300">
@@ -1172,10 +1247,16 @@ export default function Dashboard() {
         </div>
       )}
 
+      {/* ANALYSIS MODAL */}
       {selectedEvent && !analysis && (
         <div className="fixed inset-0 bg-black/80 backdrop-blur-md flex items-center justify-center p-4 z-50">
           <div className="bg-[#09090B] border border-white/10 rounded-3xl w-full max-w-sm shadow-2xl overflow-hidden animate-in zoom-in-95 duration-300">
-            <div className="p-6 border-b border-white/5"><div className="flex items-center gap-3 mb-2"><div className="w-8 h-8 rounded-xl bg-[#FF6600]/10 border border-[#FF6600]/20 flex items-center justify-center"><svg className="w-4 h-4 text-[#FF6600]" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 10V3L4 14h7v7l9-11h-7z" /></svg></div><div><h3 className="text-sm font-semibold text-white">Generate Signal</h3><p className="text-[10px] text-gray-500 truncate">{selectedEvent.title}</p></div></div></div>
+            <div className="p-6 border-b border-white/5">
+              <div className="flex items-center gap-3 mb-2">
+                <div className="w-8 h-8 rounded-xl bg-[#FF6600]/10 border border-[#FF6600]/20 flex items-center justify-center"><svg className="w-4 h-4 text-[#FF6600]" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 10V3L4 14h7v7l9-11h-7z" /></svg></div>
+                <div><h3 className="text-sm font-semibold text-white">Generate Signal</h3><p className="text-[10px] text-gray-500 truncate">{selectedEvent.title}</p></div>
+              </div>
+            </div>
             <div className="p-6">
               <form onSubmit={handleAnalyze} className="space-y-4">
                 <div><label className="block text-[10px] text-gray-500 uppercase tracking-widest mb-2 font-medium">Pair</label><select value={selectedPair} onChange={(e) => setSelectedPair(e.target.value)} className="w-full bg-white/5 border border-white/10 text-white p-3 rounded-xl text-sm font-mono outline-none focus:border-[#FF6600]/50 transition-all"><option value="EUR/USD">EUR/USD</option><option value="XAU/USD">XAU/USD</option><option value="USD/JPY">USD/JPY</option></select></div>
@@ -1187,6 +1268,7 @@ export default function Dashboard() {
         </div>
       )}
 
+      {/* MOBILE SIGNAL RESULT */}
       {analysis && (
         <div className="lg:hidden fixed inset-0 bg-black/90 backdrop-blur-md z-50 overflow-y-auto p-4 flex flex-col">
           <div className="bg-[#09090B] border border-white/10 rounded-3xl w-full max-w-sm mx-auto my-auto shadow-2xl overflow-hidden animate-in zoom-in-95 duration-300">
