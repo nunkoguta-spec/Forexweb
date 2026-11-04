@@ -19,11 +19,30 @@ function getMaxDurationHours(timeframe: string): number {
   const tf = (timeframe || '').toLowerCase();
   if (tf.includes('scalp') || tf.includes('m15') || tf.includes('m5')) return 4;
   if (tf.includes('swing') || tf.includes('daily') || tf.includes('d1')) return 168;
-  return 24; // default Intraday
+  return 24;
 }
 
 function parseNum(str: string): number {
   return parseFloat(String(str).split('-')[0].replace(/[^0-9.]/g, ''));
+}
+
+// Compute pips from signal data
+function computePips(sig: any): { pips: number; resolvedPrice: number | null } {
+  const entry = parseNum(sig.entry_zone);
+  const sl = parseNum(sig.stop_loss);
+  const tp = parseNum(sig.take_profit);
+  
+  if (isNaN(entry) || isNaN(sl) || isNaN(tp)) return { pips: 0, resolvedPrice: null };
+  
+  const isWin = sig.status === 'win';
+  const isLoss = sig.status === 'loss';
+  
+  if (isWin) {
+    return { pips: Math.abs(tp - entry), resolvedPrice: sig.resolved_price || tp };
+  } else if (isLoss) {
+    return { pips: -Math.abs(sl - entry), resolvedPrice: sig.resolved_price || sl };
+  }
+  return { pips: 0, resolvedPrice: null };
 }
 
 function LiveClock({ className = '' }: { className?: string }) {
@@ -140,23 +159,22 @@ export default function Dashboard() {
   const [notifPermission, setNotifPermission] = useState<string>('default');
   const [notifiedEvents, setNotifiedEvents] = useState<string[]>([]);
 
-  // ==== SIGNAL EVALUATION STATE ====
+  // ==== SIGNAL EVALUATION ====
   const [lastEvaluatedAt, setLastEvaluatedAt] = useState<number | null>(null);
   const [isEvaluating, setIsEvaluating] = useState(false);
+  const [isBackfilling, setIsBackfilling] = useState(false);
   const [signalFilter, setSignalFilter] = useState<'all' | 'pending' | 'resolved'>('all');
   const marketDataRef = useRef<any>(null);
+  const hasBackfilledRef = useRef(false);
 
-  // Keep marketDataRef in sync
   useEffect(() => { marketDataRef.current = marketData; }, [marketData]);
 
-  // ==== PRICE ALERTS ====
   const [priceAlerts, setPriceAlerts] = useState<PriceAlert[]>([]);
   const [alertsModalOpen, setAlertsModalOpen] = useState(false);
   const [newAlertPair, setNewAlertPair] = useState('XAU/USD');
   const [newAlertPrice, setNewAlertPrice] = useState('');
   const [newAlertDirection, setNewAlertDirection] = useState<'above' | 'below'>('above');
 
-  // ==== CHAT ====
   const [chatOpen, setChatOpen] = useState(false);
   const [chatMessages, setChatMessages] = useState<{ role: 'user' | 'assistant'; content: string }[]>([]);
   const [chatInput, setChatInput] = useState('');
@@ -188,23 +206,17 @@ export default function Dashboard() {
     try { localStorage.setItem('newssai_price_alerts', JSON.stringify(priceAlerts)); } catch (e) { /* ignore */ }
   }, [priceAlerts]);
 
-  // Check price alerts
   useEffect(() => {
     if (!marketData) return;
     const timer = setInterval(() => {
       setPriceAlerts(prev => {
         const triggered = prev.filter(a => !a.triggered && (
-          a.direction === 'above' 
-            ? Number(marketData[a.pair]?.price) >= a.target
-            : Number(marketData[a.pair]?.price) <= a.target
+          a.direction === 'above' ? Number(marketData[a.pair]?.price) >= a.target : Number(marketData[a.pair]?.price) <= a.target
         ));
         if (triggered.length === 0) return prev;
         triggered.forEach(a => {
           if (notifPermission === 'granted') {
-            new Notification(`🎯 ${a.pair} Alert`, {
-              body: `Price hit ${Number(marketData[a.pair]?.price).toFixed(2)} (target: ${a.direction} ${a.target})`,
-              icon: '/logo.png',
-            });
+            new Notification(`🎯 ${a.pair} Alert`, { body: `Price hit ${Number(marketData[a.pair]?.price).toFixed(2)} (target: ${a.direction} ${a.target})`, icon: '/logo.png' });
           }
         });
         return prev.map(a => triggered.find(t => t.id === a.id) ? { ...a, triggered: true } : a);
@@ -214,7 +226,51 @@ export default function Dashboard() {
   }, [marketData, notifPermission]);
 
   // ============================================================
-  // CORE: EVALUATE ALL PENDING SIGNALS
+  // BACKFILL: Fix old resolved signals with null/0 pips
+  // ============================================================
+  const backfillResolvedSignals = useCallback(async () => {
+    if (hasBackfilledRef.current) return;
+    hasBackfilledRef.current = true;
+    setIsBackfilling(true);
+    
+    try {
+      const { data: allResolved, error } = await supabase
+        .from('daily_signals')
+        .select('*')
+        .in('status', ['win', 'loss']);
+      
+      if (error || !allResolved) { setIsBackfilling(false); return; }
+      
+      let fixedCount = 0;
+      for (const sig of allResolved) {
+        const needsPips = sig.pips_result === null || sig.pips_result === undefined || Number(sig.pips_result) === 0;
+        const needsResolvedPrice = !sig.resolved_price;
+        
+        if (needsPips || needsResolvedPrice) {
+          const { pips, resolvedPrice } = computePips(sig);
+          if (pips !== 0 || resolvedPrice) {
+            await supabase.from('daily_signals').update({
+              pips_result: pips,
+              resolved_price: sig.resolved_price || resolvedPrice,
+              resolved_at: sig.resolved_at || new Date().toISOString(),
+            }).eq('id', sig.id);
+            fixedCount++;
+          }
+        }
+      }
+      
+      if (fixedCount > 0) {
+        console.log(`Backfilled ${fixedCount} signals`);
+        fetchDailySignals();
+      }
+    } catch (err) {
+      console.error('Backfill error:', err);
+    }
+    setIsBackfilling(false);
+  }, []);
+
+  // ============================================================
+  // EVALUATE ALL PENDING SIGNALS
   // ============================================================
   const evaluateAllPendingSignals = useCallback(async () => {
     const currentMarket = marketDataRef.current;
@@ -222,11 +278,7 @@ export default function Dashboard() {
     
     setIsEvaluating(true);
     try {
-      // Fetch ALL pending signals (not just today)
-      const { data: pendingSignals, error } = await supabase
-        .from('daily_signals')
-        .select('*')
-        .eq('status', 'pending');
+      const { data: pendingSignals, error } = await supabase.from('daily_signals').select('*').eq('status', 'pending');
       
       if (error || !pendingSignals || pendingSignals.length === 0) {
         setLastEvaluatedAt(Date.now());
@@ -250,32 +302,18 @@ export default function Dashboard() {
         let resolvedPrice = currentPrice;
         let pipsResult = 0;
 
-        // Check TP hit
         if (sig.direction === 'buy' && currentPrice >= tp) {
-          newStatus = 'win';
-          resolvedPrice = tp;
-          pipsResult = tp - entry;
+          newStatus = 'win'; resolvedPrice = tp; pipsResult = tp - entry;
         } else if (sig.direction === 'sell' && currentPrice <= tp) {
-          newStatus = 'win';
-          resolvedPrice = tp;
-          pipsResult = entry - tp;
-        }
-        // Check SL hit
-        else if (sig.direction === 'buy' && currentPrice <= sl) {
-          newStatus = 'loss';
-          resolvedPrice = sl;
-          pipsResult = sl - entry;
+          newStatus = 'win'; resolvedPrice = tp; pipsResult = entry - tp;
+        } else if (sig.direction === 'buy' && currentPrice <= sl) {
+          newStatus = 'loss'; resolvedPrice = sl; pipsResult = sl - entry;
         } else if (sig.direction === 'sell' && currentPrice >= sl) {
-          newStatus = 'loss';
-          resolvedPrice = sl;
-          pipsResult = entry - sl;
-        }
-        // Check expiry
-        else {
+          newStatus = 'loss'; resolvedPrice = sl; pipsResult = entry - sl;
+        } else {
           const createdAt = new Date(sig.created_at || sig.signal_date).getTime();
           const maxHours = getMaxDurationHours(sig.timeframe);
           const hoursElapsed = (now - createdAt) / 3600000;
-
           if (hoursElapsed >= maxHours) {
             const profit = sig.direction === 'buy' ? currentPrice - entry : entry - currentPrice;
             newStatus = profit > 0 ? 'win' : 'loss';
@@ -303,33 +341,22 @@ export default function Dashboard() {
     setIsEvaluating(false);
   }, [isEvaluating]);
 
-  // Auto-evaluate every 30s + on visibility change
+  // Auto-evaluate + backfill
   useEffect(() => {
     if (!session || !marketData) return;
-    
-    // Immediate evaluation on mount/marketData change
     evaluateAllPendingSignals();
-    
-    // Every 30s
-    const interval = setInterval(() => {
-      evaluateAllPendingSignals();
-    }, 30000);
-    
-    // On tab visible
-    const onVis = () => {
-      if (document.visibilityState === 'visible') {
-        evaluateAllPendingSignals();
-      }
-    };
+    const interval = setInterval(() => evaluateAllPendingSignals(), 30000);
+    const onVis = () => { if (document.visibilityState === 'visible') evaluateAllPendingSignals(); };
     document.addEventListener('visibilitychange', onVis);
-    
-    return () => {
-      clearInterval(interval);
-      document.removeEventListener('visibilitychange', onVis);
-    };
+    return () => { clearInterval(interval); document.removeEventListener('visibilitychange', onVis); };
   }, [session, marketData, evaluateAllPendingSignals]);
 
-  // Chart effect
+  useEffect(() => {
+    if (session && dailySignals.length > 0 && !hasBackfilledRef.current) {
+      backfillResolvedSignals();
+    }
+  }, [session, dailySignals.length, backfillResolvedSignals]);
+
   useEffect(() => {
     if (activeTab === 'calendar' && typeof window !== 'undefined' && chartContainerRef.current) {
       chartContainerRef.current.innerHTML = '';
@@ -353,19 +380,13 @@ export default function Dashboard() {
       const script = document.createElement('script');
       script.src = 'https://s3.tradingview.com/external-embedding/embed-widget-forex-heat-map.js';
       script.async = true;
-      script.innerHTML = JSON.stringify({
-        width: "100%", height: "100%",
-        currencies: ["USD", "EUR", "GBP", "JPY", "AUD", "CAD", "CHF", "NZD"],
-        isTransparent: true, colorTheme: "dark", locale: "id",
-      });
+      script.innerHTML = JSON.stringify({ width: "100%", height: "100%", currencies: ["USD", "EUR", "GBP", "JPY", "AUD", "CAD", "CHF", "NZD"], isTransparent: true, colorTheme: "dark", locale: "id" });
       strengthChartRef.current.appendChild(script);
     }
   }, [activeTab]);
 
   useEffect(() => {
-    if (chatOpen && chatEndRef.current) {
-      chatEndRef.current.scrollIntoView({ behavior: 'smooth' });
-    }
+    if (chatOpen && chatEndRef.current) chatEndRef.current.scrollIntoView({ behavior: 'smooth' });
   }, [chatMessages, chatOpen]);
 
   async function requestNotifPermission() {
@@ -456,7 +477,6 @@ export default function Dashboard() {
   }
   
   async function fetchDailySignals() {
-    // Fetch last 30 days
     const thirtyDaysAgo = new Date();
     thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
     const { data, error } = await supabase
@@ -493,7 +513,6 @@ export default function Dashboard() {
       const { error } = await supabase.from('daily_signals').upsert(toInsert, { onConflict: 'signal_date,pair' });
       if (error) throw error;
       fetchDailySignals();
-      // Immediately try to evaluate (in case any already hit TP/SL)
       setTimeout(() => evaluateAllPendingSignals(), 2000);
     } catch (err: any) { alert('ERROR: ' + err.message); }
     setIsGeneratingDaily(false);
@@ -523,31 +542,35 @@ export default function Dashboard() {
     setIsSavingTrade(false);
   }
 
-  // MANUAL RESOLVE
   async function manualResolve(sig: any, forceStatus: 'win' | 'loss' | 'expire') {
     const currentPrice = Number(marketData?.[sig.pair]?.price);
     if (!currentPrice || isNaN(currentPrice)) return alert("No live price available.");
     
     const entry = parseNum(sig.entry_zone);
+    const sl = parseNum(sig.stop_loss);
+    const tp = parseNum(sig.take_profit);
     let newStatus: 'win' | 'loss';
     let pipsResult: number;
+    let resolvedPrice: number;
     
     if (forceStatus === 'win') {
       newStatus = 'win';
-      pipsResult = Math.abs(parseNum(sig.take_profit) - entry) || 20;
+      pipsResult = Math.abs(tp - entry);
+      resolvedPrice = tp;
     } else if (forceStatus === 'loss') {
       newStatus = 'loss';
-      pipsResult = -Math.abs(parseNum(sig.stop_loss) - entry) || -15;
+      pipsResult = -Math.abs(sl - entry);
+      resolvedPrice = sl;
     } else {
-      // Expire by current price
       const profit = sig.direction === 'buy' ? currentPrice - entry : entry - currentPrice;
       newStatus = profit > 0 ? 'win' : 'loss';
       pipsResult = profit;
+      resolvedPrice = currentPrice;
     }
     
     const { error } = await supabase.from('daily_signals').update({
       status: newStatus,
-      resolved_price: currentPrice,
+      resolved_price: resolvedPrice,
       resolved_at: new Date().toISOString(),
       pips_result: pipsResult,
     }).eq('id', sig.id);
@@ -577,15 +600,12 @@ export default function Dashboard() {
     setChatLoading(true);
     try {
       const res = await fetch('/api/chat', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           messages: newMessages,
           marketContext: {
-            XAU_USD: marketData?.['XAU/USD']?.price,
-            EUR_USD: marketData?.['EUR/USD']?.price,
-            GBP_USD: marketData?.['GBP/USD']?.price,
-            USD_JPY: marketData?.['USD/JPY']?.price,
+            XAU_USD: marketData?.['XAU/USD']?.price, EUR_USD: marketData?.['EUR/USD']?.price,
+            GBP_USD: marketData?.['GBP/USD']?.price, USD_JPY: marketData?.['USD/JPY']?.price,
             next_high_impact: nextHighImpact?.title,
             next_high_impact_time: nextHighImpact ? formatTimeWIB(nextHighImpact.date) : null,
             time_wib: new Date().toLocaleString('id-ID', { timeZone: 'Asia/Jakarta' }),
@@ -601,9 +621,6 @@ export default function Dashboard() {
     setChatLoading(false);
   }
 
-  // ============================================
-  // COMPUTED STATS
-  // ============================================
   const today = new Date(); today.setHours(0, 0, 0, 0);
   const tomorrow = new Date(today); tomorrow.setDate(tomorrow.getDate() + 1);
   const yesterday = new Date(today); yesterday.setDate(yesterday.getDate() - 1);
@@ -632,15 +649,20 @@ export default function Dashboard() {
   const lotSizeStandard = riskAmountUSD / (Number(calcSl) * 10);
   const highImpactToday = filteredByDate.filter(e => e.impact === 'High').length;
 
-  // AI stats (from resolved only)
   const aiResolved = dailySignals.filter(s => s.status !== 'pending');
   const aiPending = dailySignals.filter(s => s.status === 'pending');
   const aiWins = aiResolved.filter(s => s.status === 'win').length;
   const aiLosses = aiResolved.filter(s => s.status === 'loss').length;
   const aiWinRate = aiResolved.length > 0 ? ((aiWins / aiResolved.length) * 100).toFixed(1) : "0.0";
-  const aiTotalPips = aiResolved.reduce((acc, s) => acc + (Number(s.pips_result) || 0), 0);
+  
+  // Calculate total pips using computePips fallback
+  const aiTotalPips = aiResolved.reduce((acc, s) => {
+    const { pips } = computePips(s);
+    const stored = Number(s.pips_result);
+    const finalPips = (stored !== 0 && !isNaN(stored)) ? stored : pips;
+    return acc + finalPips;
+  }, 0);
 
-  // Filtered signals for display
   const displayedSignals = dailySignals.filter(s => {
     if (signalFilter === 'pending') return s.status === 'pending';
     if (signalFilter === 'resolved') return s.status !== 'pending';
@@ -657,39 +679,26 @@ export default function Dashboard() {
 
   const navTabs = [
     { id: 'calendar', label: 'Markets', icon: (
-      <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-        <path strokeLinecap="round" strokeLinejoin="round" d="M3 13l4-4 3 3 4-6 4 5 3-3" /><path strokeLinecap="round" strokeLinejoin="round" d="M3 21h18" />
-      </svg>
+      <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M3 13l4-4 3 3 4-6 4 5 3-3" /><path strokeLinecap="round" strokeLinejoin="round" d="M3 21h18" /></svg>
     )},
     { id: 'daily', label: 'Signals', icon: (
-      <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-        <path strokeLinecap="round" strokeLinejoin="round" d="M13 10V3L4 14h7v7l9-11h-7z" />
-      </svg>
+      <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M13 10V3L4 14h7v7l9-11h-7z" /></svg>
     )},
     { id: 'history', label: 'Archive', icon: (
-      <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-        <path strokeLinecap="round" strokeLinejoin="round" d="M5 8h14M5 8a2 2 0 110-4h14a2 2 0 110 4M5 8v10a2 2 0 002 2h10a2 2 0 002-2V8m-9 4h4" />
-      </svg>
+      <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M5 8h14M5 8a2 2 0 110-4h14a2 2 0 110 4M5 8v10a2 2 0 002 2h10a2 2 0 002-2V8m-9 4h4" /></svg>
     )},
     { id: 'performance', label: 'Journal', icon: (
-      <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-        <path strokeLinecap="round" strokeLinejoin="round" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
-      </svg>
+      <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" /></svg>
     )},
     { id: 'calculator', label: 'Risk', icon: (
-      <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-        <path strokeLinecap="round" strokeLinejoin="round" d="M9 7h6m-6 4h6m-6 4h6m-6 4h6M5 5h14a2 2 0 012 2v12a2 2 0 01-2 2H5a2 2 0 01-2-2V7a2 2 0 012-2z" />
-      </svg>
+      <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M9 7h6m-6 4h6m-6 4h6m-6 4h6M5 5h14a2 2 0 012 2v12a2 2 0 01-2 2H5a2 2 0 01-2-2V7a2 2 0 012-2z" /></svg>
     )},
   ];
 
   if (isAuthLoading) {
     return (
       <div className="min-h-screen bg-[#09090B] flex items-center justify-center font-sans text-white/50 text-sm">
-        <div className="flex items-center gap-3">
-          <div className="w-2 h-2 rounded-full bg-[#FF6600] animate-pulse"></div>
-          Initializing terminal...
-        </div>
+        <div className="flex items-center gap-3"><div className="w-2 h-2 rounded-full bg-[#FF6600] animate-pulse"></div>Initializing terminal...</div>
       </div>
     );
   }
@@ -707,32 +716,14 @@ export default function Dashboard() {
             <p className="text-xs text-gray-500 tracking-widest uppercase">Terminal Access</p>
           </div>
           <div className="bg-white/[0.02] backdrop-blur-xl border border-white/10 rounded-3xl p-8 shadow-2xl">
-            <h2 className="text-lg font-semibold text-white text-center mb-8">
-              {authMode === 'login' ? 'Welcome back' : 'Create account'}
-            </h2>
-            {authMessage && (
-              <div className={`mb-6 p-3 text-xs rounded-xl border ${authMessage.type === 'error' ? 'bg-red-500/10 border-red-500/30 text-red-300' : 'bg-green-500/10 border-green-500/30 text-green-300'}`}>
-                {authMessage.text}
-              </div>
-            )}
+            <h2 className="text-lg font-semibold text-white text-center mb-8">{authMode === 'login' ? 'Welcome back' : 'Create account'}</h2>
+            {authMessage && (<div className={`mb-6 p-3 text-xs rounded-xl border ${authMessage.type === 'error' ? 'bg-red-500/10 border-red-500/30 text-red-300' : 'bg-green-500/10 border-green-500/30 text-green-300'}`}>{authMessage.text}</div>)}
             <form onSubmit={handleAuth} className="space-y-4">
-              <div>
-                <label className="block text-[10px] text-gray-500 uppercase tracking-widest mb-2 font-medium">Email</label>
-                <input type="email" value={authEmail} onChange={(e) => setAuthEmail(e.target.value)} required className="w-full bg-white/5 border border-white/10 text-white px-4 py-3 rounded-xl text-sm outline-none focus:border-[#FF6600]/50 focus:bg-white/[0.07] transition-all placeholder-gray-600" placeholder="name@domain.com" />
-              </div>
-              <div>
-                <label className="block text-[10px] text-gray-500 uppercase tracking-widest mb-2 font-medium">Password</label>
-                <input type="password" value={authPassword} onChange={(e) => setAuthPassword(e.target.value)} required className="w-full bg-white/5 border border-white/10 text-white px-4 py-3 rounded-xl text-sm outline-none focus:border-[#FF6600]/50 focus:bg-white/[0.07] transition-all placeholder-gray-600" placeholder="••••••••" />
-              </div>
-              <button type="submit" disabled={isAuthProcessing} className="w-full bg-[#FF6600] text-black font-bold py-3.5 rounded-xl text-sm shadow-lg shadow-[#FF6600]/20 hover:bg-[#E65C00] disabled:opacity-50 transition-all mt-2">
-                {isAuthProcessing ? 'Processing...' : authMode === 'login' ? 'Sign in' : 'Create account'}
-              </button>
+              <div><label className="block text-[10px] text-gray-500 uppercase tracking-widest mb-2 font-medium">Email</label><input type="email" value={authEmail} onChange={(e) => setAuthEmail(e.target.value)} required className="w-full bg-white/5 border border-white/10 text-white px-4 py-3 rounded-xl text-sm outline-none focus:border-[#FF6600]/50 focus:bg-white/[0.07] transition-all placeholder-gray-600" placeholder="name@domain.com" /></div>
+              <div><label className="block text-[10px] text-gray-500 uppercase tracking-widest mb-2 font-medium">Password</label><input type="password" value={authPassword} onChange={(e) => setAuthPassword(e.target.value)} required className="w-full bg-white/5 border border-white/10 text-white px-4 py-3 rounded-xl text-sm outline-none focus:border-[#FF6600]/50 focus:bg-white/[0.07] transition-all placeholder-gray-600" placeholder="••••••••" /></div>
+              <button type="submit" disabled={isAuthProcessing} className="w-full bg-[#FF6600] text-black font-bold py-3.5 rounded-xl text-sm shadow-lg shadow-[#FF6600]/20 hover:bg-[#E65C00] disabled:opacity-50 transition-all mt-2">{isAuthProcessing ? 'Processing...' : authMode === 'login' ? 'Sign in' : 'Create account'}</button>
             </form>
-            <div className="mt-6 text-center">
-              <button onClick={() => { setAuthMode(authMode === 'login' ? 'register' : 'login'); setAuthMessage(null); }} className="text-xs text-gray-500 hover:text-[#FF6600] transition-colors">
-                {authMode === 'login' ? "Don't have an account? Sign up" : 'Already have an account? Sign in'}
-              </button>
-            </div>
+            <div className="mt-6 text-center"><button onClick={() => { setAuthMode(authMode === 'login' ? 'register' : 'login'); setAuthMessage(null); }} className="text-xs text-gray-500 hover:text-[#FF6600] transition-colors">{authMode === 'login' ? "Don't have an account? Sign up" : 'Already have an account? Sign in'}</button></div>
           </div>
         </div>
       </div>
@@ -741,7 +732,6 @@ export default function Dashboard() {
 
   return (
     <div className="min-h-screen flex flex-col bg-[#09090B] text-gray-300 font-sans text-sm selection:bg-[#FF6600] selection:text-black pb-28 lg:pb-0 relative">
-      
       <div className="fixed inset-0 pointer-events-none overflow-hidden z-0">
         <div className="absolute top-0 left-1/4 w-[600px] h-[600px] bg-[#FF6600] opacity-[0.03] rounded-full blur-[120px]"></div>
         <div className="absolute bottom-0 right-1/4 w-[600px] h-[600px] bg-[#FF6600] opacity-[0.02] rounded-full blur-[120px]"></div>
@@ -749,48 +739,27 @@ export default function Dashboard() {
 
       <header className="relative z-30 bg-[#09090B]/80 backdrop-blur-2xl border-b border-white/5 sticky top-0">
         <div className="h-0.5 w-full bg-gradient-to-r from-transparent via-[#FF6600] to-transparent opacity-50"></div>
-        
         <div className="max-w-[1600px] mx-auto px-4 lg:px-6 h-16 flex items-center justify-between">
           <div className="flex items-center gap-8">
             <div className="flex items-center gap-3">
-              <div className="w-8 h-8 rounded-lg bg-[#FF6600] flex items-center justify-center shadow-[0_0_15px_rgba(255,102,0,0.4)]">
-                <img src="/logo.png" alt="Logo" className="h-5 w-5 object-contain" />
-              </div>
+              <div className="w-8 h-8 rounded-lg bg-[#FF6600] flex items-center justify-center shadow-[0_0_15px_rgba(255,102,0,0.4)]"><img src="/logo.png" alt="Logo" className="h-5 w-5 object-contain" /></div>
               <span className="text-base font-bold text-white tracking-widest uppercase">Newss<span className="text-[#FF6600]">AI</span></span>
             </div>
             <nav className="hidden lg:flex gap-1">
               {navTabs.map((tab) => (
-                <button key={tab.id} onClick={() => setActiveTab(tab.id as any)}
-                  className={`px-4 py-2 rounded-lg text-xs font-semibold transition-all flex items-center gap-2 ${activeTab === tab.id ? 'bg-white/10 text-white shadow-sm' : 'text-gray-500 hover:text-white hover:bg-white/5'}`}>
-                  {tab.icon}{tab.label}
-                </button>
+                <button key={tab.id} onClick={() => setActiveTab(tab.id as any)} className={`px-4 py-2 rounded-lg text-xs font-semibold transition-all flex items-center gap-2 ${activeTab === tab.id ? 'bg-white/10 text-white shadow-sm' : 'text-gray-500 hover:text-white hover:bg-white/5'}`}>{tab.icon}{tab.label}</button>
               ))}
             </nav>
           </div>
           <div className="flex items-center gap-2 sm:gap-3">
-            <div className="hidden md:flex items-center gap-3 bg-white/[0.03] border border-white/5 rounded-full px-4 py-1.5">
-              <span className="text-[10px] font-mono"><span className="text-gray-500">XAU</span> <span className="text-[#FF6600]">{marketData?.['XAU/USD']?.price || '—'}</span></span>
-            </div>
-            <button onClick={() => setAlertsModalOpen(true)}
-              className="relative w-8 h-8 sm:w-9 sm:h-9 rounded-full bg-white/[0.03] border border-white/5 hover:bg-[#FF6600]/10 hover:border-[#FF6600]/30 flex items-center justify-center transition-all">
+            <div className="hidden md:flex items-center gap-3 bg-white/[0.03] border border-white/5 rounded-full px-4 py-1.5"><span className="text-[10px] font-mono"><span className="text-gray-500">XAU</span> <span className="text-[#FF6600]">{marketData?.['XAU/USD']?.price || '—'}</span></span></div>
+            <button onClick={() => setAlertsModalOpen(true)} className="relative w-8 h-8 sm:w-9 sm:h-9 rounded-full bg-white/[0.03] border border-white/5 hover:bg-[#FF6600]/10 hover:border-[#FF6600]/30 flex items-center justify-center transition-all">
               <svg className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 17h5l-1.405-1.405A2.032 2.032 0 0118 14.158V11a6.002 6.002 0 00-4-5.659V5a2 2 0 10-4 0v.341C7.67 6.165 6 8.388 6 11v3.159c0 .538-.214 1.055-.595 1.436L4 17h5m6 0v1a3 3 0 11-6 0v-1m6 0H9" /></svg>
-              {priceAlerts.filter(a => !a.triggered).length > 0 && (
-                <span className="absolute -top-1 -right-1 w-4 h-4 bg-[#FF6600] text-black text-[9px] font-bold rounded-full flex items-center justify-center">
-                  {priceAlerts.filter(a => !a.triggered).length}
-                </span>
-              )}
+              {priceAlerts.filter(a => !a.triggered).length > 0 && (<span className="absolute -top-1 -right-1 w-4 h-4 bg-[#FF6600] text-black text-[9px] font-bold rounded-full flex items-center justify-center">{priceAlerts.filter(a => !a.triggered).length}</span>)}
             </button>
-            {notifPermission !== 'granted' && (
-              <button onClick={requestNotifPermission} className="text-[10px] font-semibold text-[#FF6600] hover:text-white transition-colors px-2.5 sm:px-3 py-1.5 rounded-lg border border-[#FF6600]/30 hover:bg-[#FF6600]/10">
-                <span className="hidden sm:inline">Enable Alerts</span><span className="sm:hidden">🔔</span>
-              </button>
-            )}
-            <button onClick={handleRefresh} disabled={isRefreshing} className="w-8 h-8 sm:w-9 sm:h-9 rounded-full bg-white/[0.03] border border-white/5 hover:bg-white/[0.06] flex items-center justify-center transition-all">
-              <svg className={`w-3.5 h-3.5 sm:w-4 sm:h-4 text-gray-400 ${isRefreshing ? 'animate-spin' : ''}`} fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" /></svg>
-            </button>
-            <button onClick={handleLogout} className="w-8 h-8 sm:w-9 sm:h-9 rounded-full bg-white/[0.03] border border-white/5 hover:bg-red-500/10 hover:border-red-500/30 flex items-center justify-center transition-all group">
-              <svg className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-gray-400 group-hover:text-red-400" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1" /></svg>
-            </button>
+            {notifPermission !== 'granted' && (<button onClick={requestNotifPermission} className="text-[10px] font-semibold text-[#FF6600] hover:text-white transition-colors px-2.5 sm:px-3 py-1.5 rounded-lg border border-[#FF6600]/30 hover:bg-[#FF6600]/10"><span className="hidden sm:inline">Enable Alerts</span><span className="sm:hidden">🔔</span></button>)}
+            <button onClick={handleRefresh} disabled={isRefreshing} className="w-8 h-8 sm:w-9 sm:h-9 rounded-full bg-white/[0.03] border border-white/5 hover:bg-white/[0.06] flex items-center justify-center transition-all"><svg className={`w-3.5 h-3.5 sm:w-4 sm:h-4 text-gray-400 ${isRefreshing ? 'animate-spin' : ''}`} fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" /></svg></button>
+            <button onClick={handleLogout} className="w-8 h-8 sm:w-9 sm:h-9 rounded-full bg-white/[0.03] border border-white/5 hover:bg-red-500/10 hover:border-red-500/30 flex items-center justify-center transition-all group"><svg className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-gray-400 group-hover:text-red-400" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1" /></svg></button>
           </div>
         </div>
         <div className="border-t border-white/5 bg-[#09090B]">
@@ -799,11 +768,7 @@ export default function Dashboard() {
               <span className="text-[9px] text-gray-500 uppercase tracking-widest font-bold hidden lg:inline shrink-0">Sessions</span>
               <div className="overflow-x-auto custom-scrollbar min-w-0"><SessionsTracker /></div>
             </div>
-            <div className="flex items-center gap-1.5 shrink-0 bg-white/[0.03] border border-white/5 rounded-full px-2.5 sm:px-3 py-1">
-              <span className="w-1.5 h-1.5 rounded-full bg-green-500 animate-pulse"></span>
-              <LiveClock className="text-[10px] sm:text-[11px] text-gray-200 font-mono tracking-wider tabular-nums" />
-              <span className="text-[9px] sm:text-[10px] text-gray-500 font-medium">WIB</span>
-            </div>
+            <div className="flex items-center gap-1.5 shrink-0 bg-white/[0.03] border border-white/5 rounded-full px-2.5 sm:px-3 py-1"><span className="w-1.5 h-1.5 rounded-full bg-green-500 animate-pulse"></span><LiveClock className="text-[10px] sm:text-[11px] text-gray-200 font-mono tracking-wider tabular-nums" /><span className="text-[9px] sm:text-[10px] text-gray-500 font-medium">WIB</span></div>
           </div>
         </div>
       </header>
@@ -840,25 +805,14 @@ export default function Dashboard() {
               <div className="lg:col-span-4 bg-white/[0.02] backdrop-blur-xl border border-white/[0.06] rounded-3xl flex flex-col h-[650px] overflow-hidden">
                 <div className="p-5 flex justify-between items-center border-b border-white/5">
                   <div><h2 className="text-sm font-semibold text-white">Calendar</h2><p className="text-[10px] text-gray-500 mt-0.5">Filter by date</p></div>
-                  <div className="flex gap-1 bg-white/5 rounded-lg p-0.5">
-                    {['yesterday', 'today', 'tomorrow'].map((f) => (
-                      <button key={f} onClick={() => setDateFilter(f as any)}
-                        className={`px-2.5 py-1 rounded-md text-[10px] font-medium uppercase transition-all ${dateFilter === f ? 'bg-[#FF6600] text-black' : 'text-gray-400 hover:text-white'}`}>
-                        {f === 'yesterday' ? 'Yest' : f === 'today' ? 'Today' : 'Tmrw'}
-                      </button>
-                    ))}
-                  </div>
+                  <div className="flex gap-1 bg-white/5 rounded-lg p-0.5">{['yesterday', 'today', 'tomorrow'].map((f) => (<button key={f} onClick={() => setDateFilter(f as any)} className={`px-2.5 py-1 rounded-md text-[10px] font-medium uppercase transition-all ${dateFilter === f ? 'bg-[#FF6600] text-black' : 'text-gray-400 hover:text-white'}`}>{f === 'yesterday' ? 'Yest' : f === 'today' ? 'Today' : 'Tmrw'}</button>))}</div>
                 </div>
                 <div className="flex-1 overflow-y-auto custom-scrollbar">
                   {importantEvents.length === 0 && <div className="p-8 text-center text-gray-600 text-xs">No events</div>}
                   {importantEvents.map((ev, i) => (
-                    <div key={i} className="p-4 border-b border-white/5 hover:bg-white/[0.02] transition-colors group cursor-pointer"
-                      onClick={() => { setSelectedEvent(ev); setAnalysis(null); setSelectedPair(ev.country === 'USD' ? 'XAU/USD' : 'EUR/USD'); }}>
+                    <div key={i} className="p-4 border-b border-white/5 hover:bg-white/[0.02] transition-colors group cursor-pointer" onClick={() => { setSelectedEvent(ev); setAnalysis(null); setSelectedPair(ev.country === 'USD' ? 'XAU/USD' : 'EUR/USD'); }}>
                       <div className="flex items-center justify-between mb-1.5">
-                        <div className="flex items-center gap-2">
-                          <span className={`w-1.5 h-1.5 rounded-full ${ev.impact === 'High' ? 'bg-red-500 shadow-[0_0_8px_rgba(239,68,68,0.6)]' : 'bg-amber-400'}`}></span>
-                          <span className="text-[10px] text-gray-500 font-mono">{formatDateWIB(ev.date)} · {formatTimeWIB(ev.date)}</span>
-                        </div>
+                        <div className="flex items-center gap-2"><span className={`w-1.5 h-1.5 rounded-full ${ev.impact === 'High' ? 'bg-red-500 shadow-[0_0_8px_rgba(239,68,68,0.6)]' : 'bg-amber-400'}`}></span><span className="text-[10px] text-gray-500 font-mono">{formatDateWIB(ev.date)} · {formatTimeWIB(ev.date)}</span></div>
                         <span className="text-[10px] font-bold text-[#FF6600] opacity-0 group-hover:opacity-100 transition-opacity">→</span>
                       </div>
                       <div className="flex items-center gap-2"><span className="text-[10px] font-bold text-[#FF6600] w-8">{ev.country}</span><span className="text-xs text-gray-200 flex-1">{ev.title}</span></div>
@@ -869,27 +823,14 @@ export default function Dashboard() {
 
               <div className="lg:col-span-5 bg-white/[0.02] backdrop-blur-xl border border-white/[0.06] rounded-3xl flex flex-col h-[650px] overflow-hidden">
                 <div className="p-5 border-b border-white/5 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3">
-                  <h2 className="text-sm font-semibold text-white flex items-center gap-2">
-                    <svg className="w-4 h-4 text-[#FF6600]" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 7h8m0 0v8m0-8l-8 8-4-4-6 6" /></svg>
-                    XAU / USD
-                  </h2>
-                  <div className="flex items-center gap-1 bg-[#09090B] border border-white/10 rounded-xl p-1">
-                    {['1', '5', '15', '60', '240', 'D'].map((tf) => (
-                      <button key={tf} onClick={() => setChartInterval(tf)}
-                        className={`px-2 sm:px-2.5 py-1 rounded-lg text-[10px] font-medium transition-all ${chartInterval === tf ? 'bg-[#FF6600] text-black shadow-[0_0_10px_rgba(255,102,0,0.3)]' : 'text-gray-400 hover:text-white hover:bg-white/5'}`}>
-                        {tf === 'D' ? '1D' : tf === '60' ? '1H' : tf === '240' ? '4H' : `${tf}m`}
-                      </button>
-                    ))}
-                  </div>
+                  <h2 className="text-sm font-semibold text-white flex items-center gap-2"><svg className="w-4 h-4 text-[#FF6600]" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 7h8m0 0v8m0-8l-8 8-4-4-6 6" /></svg>XAU / USD</h2>
+                  <div className="flex items-center gap-1 bg-[#09090B] border border-white/10 rounded-xl p-1">{['1', '5', '15', '60', '240', 'D'].map((tf) => (<button key={tf} onClick={() => setChartInterval(tf)} className={`px-2 sm:px-2.5 py-1 rounded-lg text-[10px] font-medium transition-all ${chartInterval === tf ? 'bg-[#FF6600] text-black shadow-[0_0_10px_rgba(255,102,0,0.3)]' : 'text-gray-400 hover:text-white hover:bg-white/5'}`}>{tf === 'D' ? '1D' : tf === '60' ? '1H' : tf === '240' ? '4H' : `${tf}m`}</button>))}</div>
                 </div>
                 <div id="tradingview_chart" ref={chartContainerRef} className="w-full flex-1 rounded-b-3xl overflow-hidden" />
               </div>
 
               <div className="lg:col-span-3 bg-white/[0.02] backdrop-blur-xl border border-white/[0.06] rounded-3xl flex flex-col h-[650px] overflow-hidden">
-                <div className="p-5 border-b border-white/5">
-                  <h2 className="text-sm font-semibold text-white flex items-center gap-2"><div className="w-1.5 h-1.5 rounded-full bg-[#FF6600] animate-pulse"></div>AI Signal</h2>
-                  <p className="text-[10px] text-gray-500 mt-0.5">DeepSeek Engine</p>
-                </div>
+                <div className="p-5 border-b border-white/5"><h2 className="text-sm font-semibold text-white flex items-center gap-2"><div className="w-1.5 h-1.5 rounded-full bg-[#FF6600] animate-pulse"></div>AI Signal</h2><p className="text-[10px] text-gray-500 mt-0.5">DeepSeek Engine</p></div>
                 <div className="flex-1 p-4 overflow-y-auto custom-scrollbar">
                   {analysis ? (
                     <div className="space-y-4 animate-in fade-in slide-in-from-right-2 duration-300">
@@ -897,9 +838,7 @@ export default function Dashboard() {
                         <div className="absolute top-0 right-0 w-32 h-32 blur-3xl opacity-30 rounded-full" style={{ background: analysis.direction === 'buy' ? '#22c55e' : analysis.direction === 'sell' ? '#ef4444' : '#6b7280' }}></div>
                         <div className="relative">
                           <div className="text-[10px] text-white/60 font-mono tracking-wider mb-2">{analysis.pair} · {analysis.timeframe}</div>
-                          <div className={`text-4xl font-bold tracking-tight ${analysis.direction === 'buy' ? 'text-green-400' : analysis.direction === 'sell' ? 'text-red-400' : 'text-gray-400'}`}>
-                            {analysis.direction === 'buy' ? '▲ BUY' : analysis.direction === 'sell' ? '▼ SELL' : analysis.direction.toUpperCase()}
-                          </div>
+                          <div className={`text-4xl font-bold tracking-tight ${analysis.direction === 'buy' ? 'text-green-400' : analysis.direction === 'sell' ? 'text-red-400' : 'text-gray-400'}`}>{analysis.direction === 'buy' ? '▲ BUY' : analysis.direction === 'sell' ? '▼ SELL' : analysis.direction.toUpperCase()}</div>
                           <div className="text-[10px] text-white/40 font-mono mt-2">Live: {analysis.current_price}</div>
                         </div>
                       </div>
@@ -916,9 +855,7 @@ export default function Dashboard() {
                     </div>
                   ) : (
                     <div className="h-full flex flex-col items-center justify-center text-center px-4">
-                      <div className="w-16 h-16 rounded-2xl bg-white/[0.03] border border-white/5 flex items-center justify-center mb-4">
-                        <svg className="w-7 h-7 text-gray-600" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M13 10V3L4 14h7v7l9-11h-7z" /></svg>
-                      </div>
+                      <div className="w-16 h-16 rounded-2xl bg-white/[0.03] border border-white/5 flex items-center justify-center mb-4"><svg className="w-7 h-7 text-gray-600" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M13 10V3L4 14h7v7l9-11h-7z" /></svg></div>
                       <p className="text-xs text-gray-500 leading-relaxed">Select an economic event<br/>to generate an AI signal.</p>
                     </div>
                   )}
@@ -928,13 +865,7 @@ export default function Dashboard() {
 
             <div className="bg-white/[0.02] backdrop-blur-xl border border-white/[0.06] rounded-3xl overflow-hidden">
               <div className="p-5 border-b border-white/5 flex justify-between items-center">
-                <div>
-                  <h2 className="text-sm font-semibold text-white flex items-center gap-2">
-                    <svg className="w-4 h-4 text-[#FF6600]" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" /></svg>
-                    Currency Strength Heatmap
-                  </h2>
-                  <p className="text-[10px] text-gray-500 mt-0.5">Real-time movement · 8 majors</p>
-                </div>
+                <div><h2 className="text-sm font-semibold text-white flex items-center gap-2"><svg className="w-4 h-4 text-[#FF6600]" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" /></svg>Currency Strength Heatmap</h2><p className="text-[10px] text-gray-500 mt-0.5">Real-time movement · 8 majors</p></div>
                 <span className="text-[10px] font-mono px-2 py-1 rounded-md bg-[#FF6600]/10 text-[#FF6600] border border-[#FF6600]/20">LIVE</span>
               </div>
               <div ref={strengthChartRef} className="tradingview-widget-container w-full h-[400px]" />
@@ -944,120 +875,79 @@ export default function Dashboard() {
 
         {activeTab === 'daily' && (
           <div className="animate-in fade-in slide-in-from-bottom-2 duration-500">
-            
-            {/* HEADER WITH EVALUATE */}
             <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 mb-6">
               <div>
                 <h2 className="text-2xl font-bold text-white tracking-tight">Daily Signals</h2>
                 <p className="text-xs text-gray-500 mt-1">
-                  Auto-evaluated every 30s · {lastEvaluatedAt ? `Last: ${new Date(lastEvaluatedAt).toLocaleTimeString('id-ID', { timeZone: 'Asia/Jakarta' })}` : 'Not yet evaluated'}
+                  {isBackfilling ? 'Fixing legacy data...' : `Auto-evaluated · ${lastEvaluatedAt ? `Last: ${new Date(lastEvaluatedAt).toLocaleTimeString('id-ID', { timeZone: 'Asia/Jakarta' })}` : 'Loading...'}`}
                 </p>
               </div>
               <div className="flex gap-2 w-full sm:w-auto">
+                <button onClick={backfillResolvedSignals} disabled={isBackfilling}
+                  className="flex-1 sm:flex-none bg-white/[0.03] hover:bg-white/[0.06] border border-white/10 text-white px-3 py-2.5 rounded-xl text-xs font-semibold transition-all disabled:opacity-50 flex items-center justify-center gap-2">
+                  <svg className={`w-3.5 h-3.5 ${isBackfilling ? 'animate-spin' : ''}`} fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" /></svg>
+                  Fix Data
+                </button>
                 <button onClick={evaluateAllPendingSignals} disabled={isEvaluating}
-                  className="flex-1 sm:flex-none bg-white/[0.03] hover:bg-white/[0.06] border border-white/10 text-white px-4 py-2.5 rounded-xl text-xs font-semibold transition-all disabled:opacity-50 flex items-center justify-center gap-2">
-                  <svg className={`w-3.5 h-3.5 ${isEvaluating ? 'animate-spin' : ''}`} fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
-                  </svg>
-                  {isEvaluating ? 'Evaluating...' : 'Evaluate Now'}
+                  className="flex-1 sm:flex-none bg-white/[0.03] hover:bg-white/[0.06] border border-white/10 text-white px-3 py-2.5 rounded-xl text-xs font-semibold transition-all disabled:opacity-50 flex items-center justify-center gap-2">
+                  <svg className={`w-3.5 h-3.5 ${isEvaluating ? 'animate-spin' : ''}`} fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
+                  Evaluate
                 </button>
                 <button onClick={generateDailySignals} disabled={isGeneratingDaily}
-                  className="flex-1 sm:flex-none bg-[#FF6600] text-black px-5 py-2.5 rounded-xl text-xs font-semibold tracking-wider uppercase shadow-lg shadow-[#FF6600]/20 hover:bg-[#E65C00] disabled:opacity-50 transition-all">
-                  {isGeneratingDaily ? 'Generating...' : 'Generate Signals'}
+                  className="flex-1 sm:flex-none bg-[#FF6600] text-black px-4 py-2.5 rounded-xl text-xs font-semibold tracking-wider uppercase shadow-lg shadow-[#FF6600]/20 hover:bg-[#E65C00] disabled:opacity-50 transition-all">
+                  {isGeneratingDaily ? 'Generating...' : 'Generate'}
                 </button>
               </div>
             </div>
 
-            {/* STATS */}
             <div className="grid grid-cols-2 md:grid-cols-6 gap-3 mb-6">
-              <div className="bg-white/[0.02] backdrop-blur-xl border border-white/[0.06] rounded-2xl p-4">
-                <div className="text-[10px] text-gray-500 uppercase tracking-widest mb-1">Total</div>
-                <div className="text-2xl font-mono font-semibold text-white">{dailySignals.length}</div>
-              </div>
-              <div className="bg-white/[0.02] backdrop-blur-xl border border-white/[0.06] rounded-2xl p-4">
-                <div className="text-[10px] text-gray-500 uppercase tracking-widest mb-1">Pending</div>
-                <div className="text-2xl font-mono font-semibold text-amber-400">{aiPending.length}</div>
-              </div>
-              <div className="bg-white/[0.02] backdrop-blur-xl border border-white/[0.06] rounded-2xl p-4">
-                <div className="text-[10px] text-green-400/70 uppercase tracking-widest mb-1">Won</div>
-                <div className="text-2xl font-mono font-semibold text-green-400">{aiWins}</div>
-              </div>
-              <div className="bg-white/[0.02] backdrop-blur-xl border border-white/[0.06] rounded-2xl p-4">
-                <div className="text-[10px] text-red-400/70 uppercase tracking-widest mb-1">Lost</div>
-                <div className="text-2xl font-mono font-semibold text-red-400">{aiLosses}</div>
-              </div>
-              <div className="bg-white/[0.02] backdrop-blur-xl border border-white/[0.06] rounded-2xl p-4">
-                <div className="text-[10px] text-gray-500 uppercase tracking-widest mb-1">Net Pips</div>
-                <div className={`text-2xl font-mono font-semibold ${aiTotalPips >= 0 ? 'text-green-400' : 'text-red-400'}`}>
-                  {aiTotalPips > 0 ? '+' : ''}{aiTotalPips.toFixed(0)}
-                </div>
-              </div>
-              <div className="bg-gradient-to-br from-[#FF6600]/20 to-[#FF6600]/5 backdrop-blur-xl border border-[#FF6600]/30 rounded-2xl p-4">
-                <div className="text-[10px] text-[#FF6600] uppercase tracking-widest font-medium mb-1">Accuracy</div>
-                <div className="text-2xl font-mono font-semibold text-[#FF6600]">{aiWinRate}%</div>
-              </div>
+              <div className="bg-white/[0.02] backdrop-blur-xl border border-white/[0.06] rounded-2xl p-4"><div className="text-[10px] text-gray-500 uppercase tracking-widest mb-1">Total</div><div className="text-2xl font-mono font-semibold text-white">{dailySignals.length}</div></div>
+              <div className="bg-white/[0.02] backdrop-blur-xl border border-white/[0.06] rounded-2xl p-4"><div className="text-[10px] text-gray-500 uppercase tracking-widest mb-1">Pending</div><div className="text-2xl font-mono font-semibold text-amber-400">{aiPending.length}</div></div>
+              <div className="bg-white/[0.02] backdrop-blur-xl border border-white/[0.06] rounded-2xl p-4"><div className="text-[10px] text-green-400/70 uppercase tracking-widest mb-1">Won</div><div className="text-2xl font-mono font-semibold text-green-400">{aiWins}</div></div>
+              <div className="bg-white/[0.02] backdrop-blur-xl border border-white/[0.06] rounded-2xl p-4"><div className="text-[10px] text-red-400/70 uppercase tracking-widest mb-1">Lost</div><div className="text-2xl font-mono font-semibold text-red-400">{aiLosses}</div></div>
+              <div className="bg-white/[0.02] backdrop-blur-xl border border-white/[0.06] rounded-2xl p-4"><div className="text-[10px] text-gray-500 uppercase tracking-widest mb-1">Net Pips</div><div className={`text-2xl font-mono font-semibold ${aiTotalPips >= 0 ? 'text-green-400' : 'text-red-400'}`}>{aiTotalPips > 0 ? '+' : ''}{aiTotalPips.toFixed(1)}</div></div>
+              <div className="bg-gradient-to-br from-[#FF6600]/20 to-[#FF6600]/5 backdrop-blur-xl border border-[#FF6600]/30 rounded-2xl p-4"><div className="text-[10px] text-[#FF6600] uppercase tracking-widest font-medium mb-1">Accuracy</div><div className="text-2xl font-mono font-semibold text-[#FF6600]">{aiWinRate}%</div></div>
             </div>
 
-            {/* FILTER TABS */}
             <div className="flex gap-1 mb-4 bg-white/[0.02] border border-white/[0.06] p-1 rounded-xl w-fit">
-              {[
-                { id: 'all', label: `All (${dailySignals.length})` },
-                { id: 'pending', label: `Pending (${aiPending.length})` },
-                { id: 'resolved', label: `Resolved (${aiResolved.length})` },
-              ].map(f => (
-                <button key={f.id} onClick={() => setSignalFilter(f.id as any)}
-                  className={`px-4 py-2 rounded-lg text-xs font-semibold transition-all ${signalFilter === f.id ? 'bg-[#FF6600] text-black' : 'text-gray-400 hover:text-white'}`}>
-                  {f.label}
-                </button>
+              {[{ id: 'all', label: `All (${dailySignals.length})` }, { id: 'pending', label: `Pending (${aiPending.length})` }, { id: 'resolved', label: `Resolved (${aiResolved.length})` }].map(f => (
+                <button key={f.id} onClick={() => setSignalFilter(f.id as any)} className={`px-4 py-2 rounded-lg text-xs font-semibold transition-all ${signalFilter === f.id ? 'bg-[#FF6600] text-black' : 'text-gray-400 hover:text-white'}`}>{f.label}</button>
               ))}
             </div>
 
             {displayedSignals.length === 0 && !isGeneratingDaily && (
-              <div className="bg-white/[0.02] backdrop-blur-xl border border-white/[0.06] rounded-3xl p-16 text-center">
-                <p className="text-sm text-gray-400 font-medium">No signals</p>
-                <p className="text-xs text-gray-600 mt-1">Click "Generate Signals" to create new signals.</p>
-              </div>
+              <div className="bg-white/[0.02] backdrop-blur-xl border border-white/[0.06] rounded-3xl p-16 text-center"><p className="text-sm text-gray-400 font-medium">No signals</p><p className="text-xs text-gray-600 mt-1">Click "Generate" to create new signals.</p></div>
             )}
 
             {isGeneratingDaily && (
-              <div className="bg-white/[0.02] backdrop-blur-xl border border-white/[0.06] rounded-3xl p-16 text-center">
-                <div className="w-8 h-8 border-2 border-[#FF6600] border-t-transparent rounded-full animate-spin mx-auto mb-4"></div>
-                <p className="text-sm text-[#FF6600] font-medium">AI is analyzing markets...</p>
-              </div>
+              <div className="bg-white/[0.02] backdrop-blur-xl border border-white/[0.06] rounded-3xl p-16 text-center"><div className="w-8 h-8 border-2 border-[#FF6600] border-t-transparent rounded-full animate-spin mx-auto mb-4"></div><p className="text-sm text-[#FF6600] font-medium">AI is analyzing markets...</p></div>
             )}
 
             {displayedSignals.length > 0 && (
               <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
                 {displayedSignals.map((sig, i) => {
+                  const isPending = sig.status === 'pending';
+                  const isWin = sig.status === 'win';
+                  const isLoss = sig.status === 'loss';
+                  
                   const e = parseNum(sig.entry_zone); const s = parseNum(sig.stop_loss); const t = parseNum(sig.take_profit);
                   let rr = "-";
                   if (!isNaN(e) && !isNaN(s) && !isNaN(t) && e !== s) rr = `1:${(Math.abs(t - e) / Math.abs(e - s)).toFixed(1)}`;
                   
-                  const isPending = sig.status === 'pending';
-                  const isWin = sig.status === 'win';
-                  const isLoss = sig.status === 'loss';
-                  const pips = Number(sig.pips_result) || 0;
+                  // Compute pips & resolved price with fallback
+                  const { pips: computedPips, resolvedPrice: computedResolvedPrice } = computePips(sig);
+                  const storedPips = Number(sig.pips_result);
+                  const finalPips = (!isNaN(storedPips) && storedPips !== 0) ? storedPips : computedPips;
+                  const finalResolvedPrice = sig.resolved_price || computedResolvedPrice;
 
                   return (
-                    <div key={i} className={`relative bg-white/[0.02] backdrop-blur-xl border rounded-3xl overflow-hidden transition-all ${
-                      isPending ? 'border-white/[0.06]' : 
-                      isWin ? 'border-green-500/30' : 'border-red-500/30'
-                    }`}>
-                      <div className={`absolute top-4 right-4 px-2.5 py-1 text-[9px] font-bold rounded-full ${
-                        isPending ? 'bg-amber-500/20 text-amber-400 border border-amber-500/30' : 
-                        isWin ? 'bg-green-500/20 text-green-400 border border-green-500/30' : 
-                        'bg-red-500/20 text-red-400 border border-red-500/30'
-                      }`}>
+                    <div key={i} className={`relative bg-white/[0.02] backdrop-blur-xl border rounded-3xl overflow-hidden transition-all ${isPending ? 'border-white/[0.06]' : isWin ? 'border-green-500/30' : 'border-red-500/30'}`}>
+                      <div className={`absolute top-4 right-4 px-2.5 py-1 text-[9px] font-bold rounded-full ${isPending ? 'bg-amber-500/20 text-amber-400 border border-amber-500/30' : isWin ? 'bg-green-500/20 text-green-400 border border-green-500/30' : 'bg-red-500/20 text-red-400 border border-red-500/30'}`}>
                         {isPending ? '● PENDING' : isWin ? '✓ WIN' : '✗ LOSS'}
                       </div>
                       
                       <div className="p-6 border-b border-white/5">
-                        <div className="flex items-center gap-2 mb-2">
-                          <span className={`w-2 h-2 rounded-full ${sig.direction === 'buy' ? 'bg-green-500' : 'bg-red-500'}`}></span>
-                          <span className={`text-[10px] font-bold uppercase tracking-wider ${sig.direction === 'buy' ? 'text-green-400' : 'text-red-400'}`}>
-                            {sig.direction === 'buy' ? 'Bullish' : 'Bearish'}
-                          </span>
-                        </div>
+                        <div className="flex items-center gap-2 mb-2"><span className={`w-2 h-2 rounded-full ${sig.direction === 'buy' ? 'bg-green-500' : 'bg-red-500'}`}></span><span className={`text-[10px] font-bold uppercase tracking-wider ${sig.direction === 'buy' ? 'text-green-400' : 'text-red-400'}`}>{sig.direction === 'buy' ? 'Bullish' : 'Bearish'}</span></div>
                         <div className="text-xl font-bold text-white">{sig.pair}</div>
                         <div className="text-[10px] text-gray-500 mt-0.5">{sig.timeframe} · {formatDateWIB(sig.signal_date)}</div>
                       </div>
@@ -1071,37 +961,29 @@ export default function Dashboard() {
                           <>
                             <div className="flex justify-between pt-2 border-t border-white/5 mt-2">
                               <span className="text-gray-500">Resolved</span>
-                              <span className="text-gray-300 font-semibold">{sig.resolved_price ? Number(sig.resolved_price).toFixed(2) : '—'}</span>
+                              <span className="text-gray-300 font-semibold">
+                                {finalResolvedPrice && !isNaN(Number(finalResolvedPrice)) ? Number(finalResolvedPrice).toFixed(2) : '—'}
+                              </span>
                             </div>
                             <div className="flex justify-between">
-                              <span className={`font-medium ${pips >= 0 ? 'text-green-400' : 'text-red-400'}`}>Pips</span>
-                              <span className={`font-bold ${pips >= 0 ? 'text-green-400' : 'text-red-400'}`}>
-                                {pips > 0 ? '+' : ''}{pips.toFixed(1)}
+                              <span className={`font-medium ${finalPips >= 0 ? 'text-green-400' : 'text-red-400'}`}>Pips</span>
+                              <span className={`font-bold ${finalPips >= 0 ? 'text-green-400' : 'text-red-400'}`}>
+                                {finalPips > 0 ? '+' : ''}{finalPips.toFixed(1)}
                               </span>
                             </div>
                           </>
                         )}
                         
-                        <div className="flex justify-between pt-2 border-t border-white/5">
-                          <span className="text-[#FF6600] font-medium">R:R</span>
-                          <span className="text-[#FF6600] font-semibold">{rr}</span>
-                        </div>
+                        <div className="flex justify-between pt-2 border-t border-white/5"><span className="text-[#FF6600] font-medium">R:R</span><span className="text-[#FF6600] font-semibold">{rr}</span></div>
                       </div>
 
-                      {/* MANUAL RESOLVE (only for pending) */}
                       {isPending && (
                         <div className="p-4 bg-white/[0.01] border-t border-white/5">
                           <div className="text-[9px] text-gray-500 uppercase tracking-widest mb-2 text-center">Manual Resolve</div>
                           <div className="grid grid-cols-3 gap-1">
-                            <button onClick={() => manualResolve(sig, 'win')} className="bg-green-500/10 hover:bg-green-500 text-green-400 hover:text-black border border-green-500/20 py-1.5 rounded-lg text-[10px] font-bold transition-all">
-                              WIN
-                            </button>
-                            <button onClick={() => manualResolve(sig, 'expire')} className="bg-white/5 hover:bg-white/10 text-gray-400 border border-white/10 py-1.5 rounded-lg text-[10px] font-bold transition-all">
-                              EXPIRE
-                            </button>
-                            <button onClick={() => manualResolve(sig, 'loss')} className="bg-red-500/10 hover:bg-red-500 text-red-400 hover:text-black border border-red-500/20 py-1.5 rounded-lg text-[10px] font-bold transition-all">
-                              LOSS
-                            </button>
+                            <button onClick={() => manualResolve(sig, 'win')} className="bg-green-500/10 hover:bg-green-500 text-green-400 hover:text-black border border-green-500/20 py-1.5 rounded-lg text-[10px] font-bold transition-all">WIN</button>
+                            <button onClick={() => manualResolve(sig, 'expire')} className="bg-white/5 hover:bg-white/10 text-gray-400 border border-white/10 py-1.5 rounded-lg text-[10px] font-bold transition-all">EXPIRE</button>
+                            <button onClick={() => manualResolve(sig, 'loss')} className="bg-red-500/10 hover:bg-red-500 text-red-400 hover:text-black border border-red-500/20 py-1.5 rounded-lg text-[10px] font-bold transition-all">LOSS</button>
                           </div>
                         </div>
                       )}
@@ -1121,16 +1003,11 @@ export default function Dashboard() {
 
         {activeTab === 'history' && (
           <div className="animate-in fade-in slide-in-from-bottom-2 duration-500">
-            <div className="mb-8">
-              <h2 className="text-2xl font-bold text-white tracking-tight">Historical Archive</h2>
-              <p className="text-xs text-gray-500 mt-1">Past economic events</p>
-            </div>
+            <div className="mb-8"><h2 className="text-2xl font-bold text-white tracking-tight">Historical Archive</h2><p className="text-xs text-gray-500 mt-1">Past economic events</p></div>
             <div className="bg-white/[0.02] backdrop-blur-xl border border-white/[0.06] rounded-3xl overflow-hidden">
               <div className="overflow-x-auto">
                 <table className="w-full text-left text-xs whitespace-nowrap">
-                  <thead className="bg-white/[0.02] text-gray-500 text-[10px] uppercase tracking-widest border-b border-white/5">
-                    <tr><th className="px-4 sm:px-6 py-4 font-medium">Date</th><th className="px-4 sm:px-6 py-4 font-medium">Cur</th><th className="px-4 sm:px-6 py-4 font-medium">Event</th><th className="px-4 sm:px-6 py-4 text-center font-medium">Actual</th></tr>
-                  </thead>
+                  <thead className="bg-white/[0.02] text-gray-500 text-[10px] uppercase tracking-widest border-b border-white/5"><tr><th className="px-4 sm:px-6 py-4 font-medium">Date</th><th className="px-4 sm:px-6 py-4 font-medium">Cur</th><th className="px-4 sm:px-6 py-4 font-medium">Event</th><th className="px-4 sm:px-6 py-4 text-center font-medium">Actual</th></tr></thead>
                   <tbody className="divide-y divide-white/5">
                     {pastEvents.map((ev, i) => (
                       <tr key={i} className="hover:bg-white/[0.02]">
@@ -1158,15 +1035,10 @@ export default function Dashboard() {
               <div className="bg-white/[0.02] backdrop-blur-xl border border-white/[0.06] rounded-2xl p-4 sm:p-6"><div className="text-[10px] text-gray-500 uppercase tracking-widest mb-2">W / L</div><div className="text-2xl sm:text-3xl font-mono font-semibold text-white">{wins}/{losses}</div></div>
             </div>
             <div className="bg-white/[0.02] backdrop-blur-xl border border-white/[0.06] rounded-3xl overflow-hidden">
-              <div className="p-5 sm:p-6 border-b border-white/5 flex justify-between items-center">
-                <h3 className="text-sm font-semibold text-white">Ledger</h3>
-                <input type="month" value={filterMonth} onChange={(e) => setFilterMonth(e.target.value)} className="bg-white/5 border border-white/10 text-white text-xs px-3 py-2 rounded-lg outline-none focus:border-[#FF6600]/50 transition-all" />
-              </div>
+              <div className="p-5 sm:p-6 border-b border-white/5 flex justify-between items-center"><h3 className="text-sm font-semibold text-white">Ledger</h3><input type="month" value={filterMonth} onChange={(e) => setFilterMonth(e.target.value)} className="bg-white/5 border border-white/10 text-white text-xs px-3 py-2 rounded-lg outline-none focus:border-[#FF6600]/50 transition-all" /></div>
               <div className="overflow-x-auto">
                 <table className="w-full text-left text-xs whitespace-nowrap">
-                  <thead className="bg-white/[0.02] text-gray-500 text-[10px] uppercase tracking-widest border-b border-white/5">
-                    <tr><th className="px-4 sm:px-6 py-4 font-medium">Date</th><th className="px-4 sm:px-6 py-4 font-medium">Pair</th><th className="px-4 sm:px-6 py-4 font-medium">Result</th><th className="px-4 sm:px-6 py-4 text-right font-medium">Pips</th></tr>
-                  </thead>
+                  <thead className="bg-white/[0.02] text-gray-500 text-[10px] uppercase tracking-widest border-b border-white/5"><tr><th className="px-4 sm:px-6 py-4 font-medium">Date</th><th className="px-4 sm:px-6 py-4 font-medium">Pair</th><th className="px-4 sm:px-6 py-4 font-medium">Result</th><th className="px-4 sm:px-6 py-4 text-right font-medium">Pips</th></tr></thead>
                   <tbody className="divide-y divide-white/5">
                     {filteredJournal.map((trade, i) => (
                       <tr key={i} className="hover:bg-white/[0.02]">
@@ -1226,9 +1098,7 @@ export default function Dashboard() {
           <div className="bg-[#09090B] border border-white/10 rounded-3xl w-full max-w-md shadow-2xl overflow-hidden max-h-[90vh] flex flex-col">
             <div className="p-5 border-b border-white/5 flex justify-between items-center">
               <div><h3 className="text-sm font-semibold text-white">Price Alerts</h3><p className="text-[10px] text-gray-500 mt-0.5">Get notified when price hits target</p></div>
-              <button onClick={() => setAlertsModalOpen(false)} className="w-8 h-8 rounded-full bg-white/5 hover:bg-white/10 flex items-center justify-center transition-all">
-                <svg className="w-4 h-4 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" /></svg>
-              </button>
+              <button onClick={() => setAlertsModalOpen(false)} className="w-8 h-8 rounded-full bg-white/5 hover:bg-white/10 flex items-center justify-center transition-all"><svg className="w-4 h-4 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" /></svg></button>
             </div>
             <div className="p-5 border-b border-white/5">
               <div className="text-[10px] text-gray-500 uppercase tracking-widest font-medium mb-3">Create New Alert</div>
@@ -1254,16 +1124,10 @@ export default function Dashboard() {
                   {priceAlerts.map(a => (
                     <div key={a.id} className={`p-4 flex items-center justify-between ${a.triggered ? 'opacity-50' : ''}`}>
                       <div className="flex-1">
-                        <div className="flex items-center gap-2 mb-1">
-                          <span className="text-sm font-semibold text-white">{a.pair}</span>
-                          <span className={`text-[10px] px-2 py-0.5 rounded-md font-mono ${a.direction === 'above' ? 'bg-green-500/10 text-green-400' : 'bg-red-500/10 text-red-400'}`}>{a.direction === 'above' ? '↑' : '↓'} {a.target}</span>
-                          {a.triggered && <span className="text-[9px] text-green-400 bg-green-500/10 px-1.5 py-0.5 rounded">✓</span>}
-                        </div>
+                        <div className="flex items-center gap-2 mb-1"><span className="text-sm font-semibold text-white">{a.pair}</span><span className={`text-[10px] px-2 py-0.5 rounded-md font-mono ${a.direction === 'above' ? 'bg-green-500/10 text-green-400' : 'bg-red-500/10 text-red-400'}`}>{a.direction === 'above' ? '↑' : '↓'} {a.target}</span>{a.triggered && <span className="text-[9px] text-green-400 bg-green-500/10 px-1.5 py-0.5 rounded">✓</span>}</div>
                         <div className="text-[10px] text-gray-500 font-mono">Current: {marketData?.[a.pair]?.price || '—'}</div>
                       </div>
-                      <button onClick={() => removePriceAlert(a.id)} className="w-7 h-7 rounded-lg bg-red-500/10 hover:bg-red-500/20 flex items-center justify-center transition-all">
-                        <svg className="w-3.5 h-3.5 text-red-400" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" /></svg>
-                      </button>
+                      <button onClick={() => removePriceAlert(a.id)} className="w-7 h-7 rounded-lg bg-red-500/10 hover:bg-red-500/20 flex items-center justify-center transition-all"><svg className="w-3.5 h-3.5 text-red-400" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" /></svg></button>
                     </div>
                   ))}
                 </div>
@@ -1278,54 +1142,30 @@ export default function Dashboard() {
           <div className="bg-[#09090B] border border-white/10 rounded-t-3xl sm:rounded-3xl w-full max-w-md shadow-2xl overflow-hidden flex flex-col h-[85vh] sm:h-[600px] animate-in slide-in-from-bottom sm:zoom-in-95 duration-300">
             <div className="p-4 border-b border-white/5 flex justify-between items-center bg-[#0a0a0a]">
               <div className="flex items-center gap-3">
-                <div className="w-8 h-8 rounded-lg bg-[#FF6600] flex items-center justify-center shadow-[0_0_15px_rgba(255,102,0,0.4)]">
-                  <svg className="w-4 h-4 text-black" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}><path strokeLinecap="round" strokeLinejoin="round" d="M13 10V3L4 14h7v7l9-11h-7z" /></svg>
-                </div>
+                <div className="w-8 h-8 rounded-lg bg-[#FF6600] flex items-center justify-center shadow-[0_0_15px_rgba(255,102,0,0.4)]"><svg className="w-4 h-4 text-black" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}><path strokeLinecap="round" strokeLinejoin="round" d="M13 10V3L4 14h7v7l9-11h-7z" /></svg></div>
                 <div><div className="text-sm font-semibold text-white">AI Analyst</div><div className="flex items-center gap-1.5"><span className="w-1.5 h-1.5 rounded-full bg-green-500 animate-pulse"></span><span className="text-[10px] text-green-400">Online</span></div></div>
               </div>
-              <button onClick={() => setChatOpen(false)} className="w-8 h-8 rounded-full bg-white/5 hover:bg-white/10 flex items-center justify-center transition-all">
-                <svg className="w-4 h-4 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" /></svg>
-              </button>
+              <button onClick={() => setChatOpen(false)} className="w-8 h-8 rounded-full bg-white/5 hover:bg-white/10 flex items-center justify-center transition-all"><svg className="w-4 h-4 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" /></svg></button>
             </div>
             <div className="flex-1 overflow-y-auto p-4 space-y-3 custom-scrollbar">
               {chatMessages.length === 0 && (
                 <div className="text-center py-8">
-                  <div className="w-16 h-16 rounded-2xl bg-[#FF6600]/10 border border-[#FF6600]/20 flex items-center justify-center mx-auto mb-4">
-                    <svg className="w-7 h-7 text-[#FF6600]" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z" /></svg>
-                  </div>
+                  <div className="w-16 h-16 rounded-2xl bg-[#FF6600]/10 border border-[#FF6600]/20 flex items-center justify-center mx-auto mb-4"><svg className="w-7 h-7 text-[#FF6600]" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z" /></svg></div>
                   <p className="text-sm text-white font-semibold mb-1">Ask me anything</p>
                   <p className="text-xs text-gray-500 mb-4">I have access to live prices, news, and signals</p>
-                  <div className="space-y-2">
-                    {['Analisa XAU/USD hari ini?', 'Berita high impact berikutnya kapan?', 'Kapan waktu terbaik entry EUR/USD?'].map((q, i) => (
-                      <button key={i} onClick={() => setChatInput(q)} className="block w-full text-left text-xs text-gray-400 bg-white/5 hover:bg-white/10 border border-white/10 rounded-lg px-3 py-2 transition-all">"{q}"</button>
-                    ))}
-                  </div>
+                  <div className="space-y-2">{['Analisa XAU/USD hari ini?', 'Berita high impact berikutnya kapan?', 'Kapan waktu terbaik entry EUR/USD?'].map((q, i) => (<button key={i} onClick={() => setChatInput(q)} className="block w-full text-left text-xs text-gray-400 bg-white/5 hover:bg-white/10 border border-white/10 rounded-lg px-3 py-2 transition-all">"{q}"</button>))}</div>
                 </div>
               )}
               {chatMessages.map((msg, i) => (
-                <div key={i} className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}>
-                  <div className={`max-w-[85%] px-4 py-2.5 rounded-2xl text-xs leading-relaxed ${msg.role === 'user' ? 'bg-[#FF6600] text-black rounded-br-md' : 'bg-white/5 text-gray-200 border border-white/10 rounded-bl-md'}`}>{msg.content}</div>
-                </div>
+                <div key={i} className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}><div className={`max-w-[85%] px-4 py-2.5 rounded-2xl text-xs leading-relaxed ${msg.role === 'user' ? 'bg-[#FF6600] text-black rounded-br-md' : 'bg-white/5 text-gray-200 border border-white/10 rounded-bl-md'}`}>{msg.content}</div></div>
               ))}
-              {chatLoading && (
-                <div className="flex justify-start">
-                  <div className="bg-white/5 border border-white/10 px-4 py-3 rounded-2xl rounded-bl-md">
-                    <div className="flex gap-1">
-                      <div className="w-2 h-2 rounded-full bg-[#FF6600] animate-bounce" style={{ animationDelay: '0ms' }}></div>
-                      <div className="w-2 h-2 rounded-full bg-[#FF6600] animate-bounce" style={{ animationDelay: '150ms' }}></div>
-                      <div className="w-2 h-2 rounded-full bg-[#FF6600] animate-bounce" style={{ animationDelay: '300ms' }}></div>
-                    </div>
-                  </div>
-                </div>
-              )}
+              {chatLoading && (<div className="flex justify-start"><div className="bg-white/5 border border-white/10 px-4 py-3 rounded-2xl rounded-bl-md"><div className="flex gap-1"><div className="w-2 h-2 rounded-full bg-[#FF6600] animate-bounce" style={{ animationDelay: '0ms' }}></div><div className="w-2 h-2 rounded-full bg-[#FF6600] animate-bounce" style={{ animationDelay: '150ms' }}></div><div className="w-2 h-2 rounded-full bg-[#FF6600] animate-bounce" style={{ animationDelay: '300ms' }}></div></div></div></div>)}
               <div ref={chatEndRef} />
             </div>
             <form onSubmit={sendChatMessage} className="p-3 border-t border-white/5 bg-[#0a0a0a]">
               <div className="flex gap-2">
                 <input type="text" value={chatInput} onChange={(e) => setChatInput(e.target.value)} placeholder="Ask about markets..." disabled={chatLoading} className="flex-1 bg-white/5 border border-white/10 text-white px-4 py-3 rounded-xl text-xs outline-none focus:border-[#FF6600]/50 transition-all placeholder-gray-600 disabled:opacity-50" />
-                <button type="submit" disabled={chatLoading || !chatInput.trim()} className="w-11 h-11 rounded-xl bg-[#FF6600] hover:bg-[#E65C00] disabled:opacity-50 flex items-center justify-center transition-all">
-                  <svg className="w-4 h-4 text-black" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}><path strokeLinecap="round" strokeLinejoin="round" d="M12 19V5m0 0l-7 7m7-7l7 7" /></svg>
-                </button>
+                <button type="submit" disabled={chatLoading || !chatInput.trim()} className="w-11 h-11 rounded-xl bg-[#FF6600] hover:bg-[#E65C00] disabled:opacity-50 flex items-center justify-center transition-all"><svg className="w-4 h-4 text-black" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}><path strokeLinecap="round" strokeLinejoin="round" d="M12 19V5m0 0l-7 7m7-7l7 7" /></svg></button>
               </div>
             </form>
           </div>
@@ -1335,30 +1175,12 @@ export default function Dashboard() {
       {selectedEvent && !analysis && (
         <div className="fixed inset-0 bg-black/80 backdrop-blur-md flex items-center justify-center p-4 z-50">
           <div className="bg-[#09090B] border border-white/10 rounded-3xl w-full max-w-sm shadow-2xl overflow-hidden animate-in zoom-in-95 duration-300">
-            <div className="p-6 border-b border-white/5">
-              <div className="flex items-center gap-3 mb-2">
-                <div className="w-8 h-8 rounded-xl bg-[#FF6600]/10 border border-[#FF6600]/20 flex items-center justify-center">
-                  <svg className="w-4 h-4 text-[#FF6600]" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 10V3L4 14h7v7l9-11h-7z" /></svg>
-                </div>
-                <div><h3 className="text-sm font-semibold text-white">Generate Signal</h3><p className="text-[10px] text-gray-500 truncate">{selectedEvent.title}</p></div>
-              </div>
-            </div>
+            <div className="p-6 border-b border-white/5"><div className="flex items-center gap-3 mb-2"><div className="w-8 h-8 rounded-xl bg-[#FF6600]/10 border border-[#FF6600]/20 flex items-center justify-center"><svg className="w-4 h-4 text-[#FF6600]" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 10V3L4 14h7v7l9-11h-7z" /></svg></div><div><h3 className="text-sm font-semibold text-white">Generate Signal</h3><p className="text-[10px] text-gray-500 truncate">{selectedEvent.title}</p></div></div></div>
             <div className="p-6">
               <form onSubmit={handleAnalyze} className="space-y-4">
-                <div>
-                  <label className="block text-[10px] text-gray-500 uppercase tracking-widest mb-2 font-medium">Pair</label>
-                  <select value={selectedPair} onChange={(e) => setSelectedPair(e.target.value)} className="w-full bg-white/5 border border-white/10 text-white p-3 rounded-xl text-sm font-mono outline-none focus:border-[#FF6600]/50 transition-all">
-                    <option value="EUR/USD">EUR/USD</option><option value="XAU/USD">XAU/USD</option><option value="USD/JPY">USD/JPY</option>
-                  </select>
-                </div>
-                <div className="bg-white/[0.03] border border-white/5 p-4 rounded-xl text-center">
-                  <div className="text-[10px] text-gray-500 uppercase tracking-widest mb-1">Live Price</div>
-                  <div className="text-lg font-mono text-[#FF6600] font-semibold">{marketData?.[selectedPair]?.price || '—'}</div>
-                </div>
-                <div className="flex gap-2 pt-2">
-                  <button type="button" onClick={() => setSelectedEvent(null)} className="flex-1 px-4 py-3 rounded-xl text-gray-400 hover:text-white hover:bg-white/5 text-xs font-medium transition-all">Cancel</button>
-                  <button type="submit" disabled={isAnalyzing} className="flex-[2] bg-[#FF6600] text-black font-semibold py-3 rounded-xl text-xs shadow-lg shadow-[#FF6600]/20 hover:bg-[#E65C00] disabled:opacity-50 transition-all">{isAnalyzing ? 'Processing...' : 'Analyze'}</button>
-                </div>
+                <div><label className="block text-[10px] text-gray-500 uppercase tracking-widest mb-2 font-medium">Pair</label><select value={selectedPair} onChange={(e) => setSelectedPair(e.target.value)} className="w-full bg-white/5 border border-white/10 text-white p-3 rounded-xl text-sm font-mono outline-none focus:border-[#FF6600]/50 transition-all"><option value="EUR/USD">EUR/USD</option><option value="XAU/USD">XAU/USD</option><option value="USD/JPY">USD/JPY</option></select></div>
+                <div className="bg-white/[0.03] border border-white/5 p-4 rounded-xl text-center"><div className="text-[10px] text-gray-500 uppercase tracking-widest mb-1">Live Price</div><div className="text-lg font-mono text-[#FF6600] font-semibold">{marketData?.[selectedPair]?.price || '—'}</div></div>
+                <div className="flex gap-2 pt-2"><button type="button" onClick={() => setSelectedEvent(null)} className="flex-1 px-4 py-3 rounded-xl text-gray-400 hover:text-white hover:bg-white/5 text-xs font-medium transition-all">Cancel</button><button type="submit" disabled={isAnalyzing} className="flex-[2] bg-[#FF6600] text-black font-semibold py-3 rounded-xl text-xs shadow-lg shadow-[#FF6600]/20 hover:bg-[#E65C00] disabled:opacity-50 transition-all">{isAnalyzing ? 'Processing...' : 'Analyze'}</button></div>
               </form>
             </div>
           </div>
@@ -1368,12 +1190,7 @@ export default function Dashboard() {
       {analysis && (
         <div className="lg:hidden fixed inset-0 bg-black/90 backdrop-blur-md z-50 overflow-y-auto p-4 flex flex-col">
           <div className="bg-[#09090B] border border-white/10 rounded-3xl w-full max-w-sm mx-auto my-auto shadow-2xl overflow-hidden animate-in zoom-in-95 duration-300">
-            <div className="p-5 border-b border-white/5 flex justify-between items-center">
-              <h3 className="text-sm font-semibold text-white">Signal</h3>
-              <button onClick={() => { setAnalysis(null); setSelectedEvent(null); }} className="w-8 h-8 rounded-full bg-white/5 hover:bg-white/10 flex items-center justify-center transition-all">
-                <svg className="w-4 h-4 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" /></svg>
-              </button>
-            </div>
+            <div className="p-5 border-b border-white/5 flex justify-between items-center"><h3 className="text-sm font-semibold text-white">Signal</h3><button onClick={() => { setAnalysis(null); setSelectedEvent(null); }} className="w-8 h-8 rounded-full bg-white/5 hover:bg-white/10 flex items-center justify-center transition-all"><svg className="w-4 h-4 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" /></svg></button></div>
             <div className="p-5 space-y-4">
               <div className={`relative rounded-2xl p-6 overflow-hidden ${analysis.direction === 'buy' ? 'bg-gradient-to-br from-green-500/20 to-transparent border border-green-500/30' : analysis.direction === 'sell' ? 'bg-gradient-to-br from-red-500/20 to-transparent border border-red-500/30' : 'bg-gradient-to-br from-gray-500/20 to-transparent border border-gray-500/30'}`}>
                 <div className="text-[10px] text-white/60 font-mono tracking-wider mb-2">{analysis.pair} · {analysis.timeframe}</div>
